@@ -82,6 +82,8 @@ def _transport(params, network="tcp"):
     network = (network or "tcp").lower()
     if network in ("tcp", "raw", "none"):
         return {}
+    if network == "quic":
+        return {"transport": {"type": "quic"}}
     if network in ("ws", "websocket"):
         transport = {"type": "ws"}
         if params.get("path"):

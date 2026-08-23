@@ -214,7 +214,7 @@ def _http_request(sock, method, target, host, headers, body=b""):
     lines = ["{} {} HTTP/1.1".format(method, target)]
     lines.extend("{}: {}".format(k, v) for k, v in request_headers.items())
     sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("utf-8") + body)
-    response = http.client.HTTPResponse(sock)
+    response = http.client.HTTPResponse(sock, method=method)
     response.begin()
     return response.status, response.read()
 
