@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -15,6 +16,9 @@ from urllib.parse import urlsplit
 
 from front_proxy import resolve_front_proxy
 from proxy_chain import parse_proxy, request_via_proxy
+
+
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def find_free_port():
@@ -147,7 +151,8 @@ class SingBoxRunner:
         except (OSError, subprocess.SubprocessError) as exc:
             raise RuntimeError("sing-box check failed: {}".format(exc)) from exc
         if result.returncode:
-            raise RuntimeError("sing-box check failed: {}".format((result.stdout or "").strip()))
+            output = ANSI_ESCAPE.sub("", result.stdout or "").strip()
+            raise RuntimeError("sing-box check failed: {}".format(output))
 
     def start(self, config_path, port, revision, temporary=False):
         try:
@@ -234,15 +239,20 @@ class NodeDetector:
             self.runner.write_config(build_config([node], port, self.front_proxy), path)
             self.runner.check(path)
             instance = self.runner.start(path, port, revision, temporary=True)
-            http_ok = self._probe_at_port(node, self.http_url, port)
-            tls_ok = self._probe_at_port(node, self.https_url, port) if http_ok else False
+            # HTTP controls admission; HTTPS only records TLS capability.
+            self._probe_at_port(node, self.http_url, port)
+            try:
+                self._probe_at_port(node, self.https_url, port)
+                tls_ok = True
+            except Exception:
+                tls_ok = False
             node.check_count += 1
-            node.last_status = bool(http_ok)
-            node.tls = bool(tls_ok)
+            node.last_status = True
+            node.tls = tls_ok
             node.synced = False
             node.config_revision = ""
             node.last_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-            node.fail_count = max(0, node.fail_count - 1) if http_ok else node.fail_count + 1
+            node.fail_count = max(0, node.fail_count - 1)
             return node, None
         except Exception as exc:
             node.check_count += 1
@@ -266,7 +276,9 @@ class NodeDetector:
             timeout=self.timeout, proxy_username=node.inbound_username,
             proxy_password=node.inbound_password, method="HEAD",
         )
-        return status in (200, 204, 301, 302, 403)
+        if not (200 <= status < 400 or status == 403):
+            raise RuntimeError("{} returned HTTP status {}".format(url, status))
+        return status
 
 
 class SingBoxSupervisor:

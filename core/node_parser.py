@@ -11,6 +11,10 @@ from .node import ProxyNode
 
 SUPPORTED_SCHEMES = ("ss", "shadowsocks", "trojan", "vless", "vmess", "hysteria2")
 URI_PATTERN = re.compile(r"(?:ss|shadowsocks|trojan|vless|vmess|hysteria2)://[^\s<>'\"]+")
+UTLS_FINGERPRINTS = {
+    "chrome", "firefox", "edge", "safari", "360", "qq", "ios", "android",
+    "random", "randomized",
+}
 
 
 def decode_base64_text(value):
@@ -52,12 +56,19 @@ def _tls_config(params, default=True):
     security = str(params.get("security") or "").lower()
     enabled = default if security in ("", "tls", "reality") else security != "none"
     config = {"enabled": enabled}
-    for key in ("sni", "serverName", "alpn", "fp", "fingerprint", "pbk", "sid", "spx"):
-        value = params.get(key)
-        if value:
-            target = {"sni": "server_name", "serverName": "server_name",
-                      "fingerprint": "utls"}.get(key, key)
-            config[target] = value
+    server_name = params.get("sni") or params.get("serverName")
+    if server_name:
+        config["server_name"] = server_name
+    fingerprint = str(params.get("fp") or params.get("fingerprint") or "").lower()
+    if fingerprint in UTLS_FINGERPRINTS:
+        config["utls"] = {"enabled": True, "fingerprint": fingerprint}
+    public_key = params.get("pbk")
+    if security == "reality" and public_key:
+        config["reality"] = {
+            "enabled": True,
+            "public_key": public_key,
+            "short_id": params.get("sid", ""),
+        }
     if params.get("insecure") in ("1", "true", "yes"):
         config["insecure"] = True
     if params.get("allowInsecure") in ("1", "true", "yes"):
@@ -77,13 +88,23 @@ def _transport(params, network="tcp"):
             transport["path"] = params["path"]
         if params.get("host"):
             transport["headers"] = {"Host": params["host"]}
+        if str(params.get("ed", "")).isdigit():
+            transport["max_early_data"] = int(params["ed"])
+            transport["early_data_header_name"] = params.get("eh", "Sec-WebSocket-Protocol")
         return {"transport": transport}
     if network in ("grpc", "gun"):
         transport = {"type": "grpc"}
         if params.get("serviceName"):
             transport["service_name"] = params["serviceName"]
         return {"transport": transport}
-    if network in ("http", "h2", "httpupgrade"):
+    if network == "httpupgrade":
+        transport = {"type": "httpupgrade"}
+        if params.get("path"):
+            transport["path"] = params["path"]
+        if params.get("host"):
+            transport["host"] = params["host"]
+        return {"transport": transport}
+    if network in ("http", "h2"):
         transport = {"type": "http"}
         if params.get("path"):
             transport["path"] = params["path"]
@@ -130,7 +151,10 @@ def _parse_ss(uri):
         "type": "shadowsocks",
         "server": host,
         "server_port": _port(port),
-        "method": unquote(method),
+        "method": {
+            "chacha20-poly1305": "chacha20-ietf-poly1305",
+            "xchacha20-poly1305": "xchacha20-ietf-poly1305",
+        }.get(unquote(method), unquote(method)),
         "password": unquote(password),
     }
     params = _query(parsed)
@@ -155,7 +179,6 @@ def _parse_trojan(uri):
         "server_port": _port(parsed.port),
         "password": unquote(parsed.username),
         "tls": _tls_config(params),
-        "network": params.get("type", "tcp"),
     }
     config.update(_transport(params, params.get("type", params.get("network", "tcp"))))
     return ProxyNode(proxy=_endpoint(config), protocol="trojan", source=unquote(parsed.fragment),
@@ -168,13 +191,15 @@ def _parse_vless(uri):
         raise ValueError("invalid vless node")
     params = _query(parsed)
     network = params.get("type", params.get("network", "tcp"))
+    flow = params.get("flow", "")
+    if flow == "xtls-rprx-vision-udp443":
+        flow = "xtls-rprx-vision"
     config = {
         "type": "vless",
         "server": parsed.hostname,
         "server_port": _port(parsed.port),
         "uuid": unquote(parsed.username),
-        "flow": params.get("flow", ""),
-        "network": network,
+        "flow": flow,
         "tls": _tls_config(params, default=params.get("security", "none") != "none"),
     }
     config.update(_transport(params, network))
@@ -196,6 +221,11 @@ def _parse_vmess(uri):
         "path": data.get("path", ""),
         "host": data.get("host", ""),
         "serviceName": data.get("serviceName", ""),
+        "fp": data.get("fp", ""),
+        "alpn": data.get("alpn", ""),
+        "allowInsecure": str(data.get("allowInsecure", "")),
+        "ed": str(data.get("ed", "")),
+        "eh": data.get("eh", ""),
     }
     network = data.get("net", "tcp")
     config = {
@@ -205,7 +235,6 @@ def _parse_vmess(uri):
         "uuid": uuid,
         "security": data.get("scy", data.get("cipher", "auto")),
         "alter_id": int(data.get("aid", 0) or 0),
-        "network": network,
         "tls": _tls_config(params, default=bool(data.get("tls"))),
     }
     config.update(_transport(params, network))

@@ -15,20 +15,26 @@ services:
       PROXY_LISTEN: "0.0.0.0"
       PROXY_PORT: "8082"
       STATS_PORT: "8083"
-      # Minimum interval between source refreshes, in seconds (300 = 5 minutes).
-      FETCH_INTERVAL_SECONDS: "300"
-      # Full sync and availability detection interval, in seconds (120 = 2 minutes).
-      CHECK_INTERVAL_SECONDS: "120"
+      # Minimum interval between source refreshes, in seconds (3600 = 1 hour).
+      FETCH_INTERVAL_SECONDS: "3600"
+      # Full sync and availability detection interval, in seconds (600 = 10 minutes).
+      CHECK_INTERVAL_SECONDS: "600"
+      # HTTP target used to decide whether a proxy is available.
+      HTTP_URL: "http://httpbin.org"
+      # HTTPS target used with certificate verification to set the TLS capability flag.
+      HTTPS_URL: "https://www.bing.com"
+      # Per-target availability check timeout, in seconds.
+      VERIFY_TIMEOUT: "5"
       # Maximum parallel temporary sing-box processes used for node checks.
       # The active formal sing-box process is not included.
-      SING_BOX_CHECK_CONCURRENCY: "4"
+      SING_BOX_CHECK_CONCURRENCY: "64"
       # Fixed sing-box runtime binary and generated configuration directory.
       SING_BOX_BINARY: "sing-box"
       SING_BOX_RUNTIME_DIR: "/data/sing-box"
       # Persistent Web configuration and runtime data directory.
       DATA_DIR: "/data"
       CONFIG_FILE: "/data/config.json"
-      # Optional front proxy; set FRONT_PROXY in .env to override the empty default.
-      FRONT_PROXY: "${FRONT_PROXY:-}"
+      # Optional front proxy; leave empty to connect directly.
+      FRONT_PROXY: ""
     volumes:
       - ./data:/data

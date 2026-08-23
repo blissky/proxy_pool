@@ -122,9 +122,9 @@ class SyncManager:
                 checked.append(node)
                 self._set(current=current, total=total, checked=current)
                 if error:
-                    self.logger.warn("[检测] {} 失败：{}".format(node.proxy, error))
+                    self.logger.warn("[检测] {} 不可用：{}".format(node.proxy, error))
                 else:
-                    self.logger.info("[检测] {} 成功，TLS={}".format(node.proxy, node.tls))
+                    self.logger.info("[检测] {} 可用，TLS={}".format(node.proxy, node.tls))
 
             checked = self.detector.detect(nodes, callback=progress)
             # Keep the active revision visible while the replacement instance

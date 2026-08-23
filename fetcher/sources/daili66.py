@@ -13,10 +13,8 @@
 __author__ = 'JHao'
 
 from fetcher.baseFetcher import BaseFetcher
-from handler.logHandler import LogHandler
 from util.webRequest import WebRequest
 
-logger = LogHandler("fetcher")
 
 class DaiLi66Fetcher(BaseFetcher):
     """66代理 https://www.66daili.com"""
@@ -29,11 +27,14 @@ class DaiLi66Fetcher(BaseFetcher):
     def fetch(self):
         url = "http://api.66daili.com/?format=json"
         r = WebRequest().get(url, timeout=10)
-        try:
-            for each in r.json.get("data", []):
-                yield "%s:%s" % (each["ip"], each["port"])
-        except Exception as e:
-            logger.error("ProxyFetch - daili66: %s" % e)
+        payload = r.json
+        proxies = payload.get("data")
+        if not isinstance(proxies, list):
+            raise RuntimeError("daili66 API error {}: {}".format(
+                payload.get("code", "unknown"), payload.get("message", "invalid response")
+            ))
+        for each in proxies:
+            yield "%s:%s" % (each["ip"], each["port"])
 
 
 

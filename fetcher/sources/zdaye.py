@@ -13,7 +13,7 @@
 __author__ = 'JHao'
 
 from time import sleep
-from datetime import datetime
+from urllib.parse import urljoin
 
 from fetcher.baseFetcher import BaseFetcher
 from util.webRequest import WebRequest
@@ -28,23 +28,20 @@ class ZdayeFetcher(BaseFetcher):
     def fetch(self):
         start_url = "https://www.zdaye.com/free/"
         html_tree = WebRequest().get(start_url, verify=False).tree
-        latest_page_time = html_tree.xpath(
-            "//span[@class='thread_time_info']/text()")[0].strip()
-        interval = datetime.now() - datetime.strptime(
-            latest_page_time, "%Y/%m/%d %H:%M:%S")
-        if interval.total_seconds() < 300:
-            target_url = ("https://www.zdaye.com/"
-                          + html_tree.xpath("//h3[@class='thread_title']/a/@href")[0].strip())
-            while target_url:
-                _tree = WebRequest().get(target_url, verify=False).tree
-                for tr in _tree.xpath("//table//tr"):
-                    ip = "".join(tr.xpath("./td[1]/text()")).strip()
-                    port = "".join(tr.xpath("./td[2]/text()")).strip()
+        links = html_tree.xpath("//h3[@class='thread_title']/a/@href") if html_tree is not None else []
+        if not links:
+            raise RuntimeError("zdaye proxy-list link was not found")
+        target_url = urljoin(start_url, links[0].strip())
+        while target_url:
+            tree = WebRequest().get(target_url, verify=False).tree
+            for tr in tree.xpath("//table//tr"):
+                ip = "".join(tr.xpath("./td[1]/text()")).strip()
+                port = "".join(tr.xpath("./td[2]/text()")).strip()
+                if ip and port:
                     yield "%s:%s" % (ip, port)
-                next_page = _tree.xpath(
-                    "//div[@class='page']/a[@title='下一页']/@href")
-                target_url = ("https://www.zdaye.com/" + next_page[0].strip()
-                              if next_page else False)
+            next_page = tree.xpath("//div[@class='page']/a[@title='下一页']/@href")
+            target_url = urljoin(target_url, next_page[0].strip()) if next_page else ""
+            if target_url:
                 sleep(5)
 
 

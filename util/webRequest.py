@@ -87,14 +87,13 @@ class WebRequest(object):
         while True:
             try:
                 self.response = requests.get(url, headers=headers, timeout=timeout, *args, **kwargs)
+                self.response.raise_for_status()
                 return self
             except Exception as e:
                 self.log.error("requests: %s error: %s" % (url, str(e)))
                 retry_time -= 1
                 if retry_time <= 0:
-                    resp = Response()
-                    resp.status_code = 200
-                    return self
+                    raise
                 self.log.info("retry %s second after" % retry_interval)
                 time.sleep(retry_interval)
 
@@ -115,15 +114,13 @@ class WebRequest(object):
         while True:
             try:
                 self.response = requests.post(url, headers=headers, timeout=timeout, *args, **kwargs)
+                self.response.raise_for_status()
                 return self
             except Exception as e:
                 self.log.error("requests: %s error: %s" % (url, str(e)))
                 retry_time -= 1
                 if retry_time <= 0:
-                    resp = Response()
-                    resp.status_code = 200
-                    self.response = resp
-                    return self
+                    raise
                 self.log.info("retry %s second after" % retry_interval)
                 time.sleep(retry_interval)
 

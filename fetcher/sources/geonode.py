@@ -13,10 +13,7 @@
 __author__ = 'JHao'
 
 from fetcher.baseFetcher import BaseFetcher
-from handler.logHandler import LogHandler
 from util.webRequest import WebRequest
-
-logger = LogHandler("fetcher")
 
 
 class GeonodeFetcher(BaseFetcher):
@@ -27,21 +24,21 @@ class GeonodeFetcher(BaseFetcher):
 
     def fetch(self):
         url = ("https://proxylist.geonode.com/api/proxy-list?"
-               "filterLastChecked=10&page=1&limit=100&sort_by=lastChecked&sort_type=desc")
+               "page=1&limit=100&sort_by=lastChecked&sort_type=desc")
         r = WebRequest().get(url, timeout=5, retry_time=1, verify=False)
-        try:
-            proxies = []
-            for item in r.json.get("data", []):
-                ip = item.get("ip", "")
-                port = item.get("port", "")
-                if ip and port:
-                    proxies.append("%s:%s" % (ip, port))
-            if not proxies:
-                proxies = self.parseProxiesFromText(r.text)
-            for proxy in self.yieldUniqueProxies(proxies):
-                yield proxy
-        except Exception as e:
-            logger.error("ProxyFetch - geonode: %s" % e)
+        items = r.json.get("data")
+        if not isinstance(items, list):
+            raise RuntimeError("geonode returned an invalid response")
+        proxies = []
+        for item in items:
+            ip = item.get("ip", "")
+            port = item.get("port", "")
+            if ip and port:
+                proxies.append("%s:%s" % (ip, port))
+        if not proxies:
+            proxies = self.parseProxiesFromText(r.text)
+        for proxy in self.yieldUniqueProxies(proxies):
+            yield proxy
 
 
 if __name__ == '__main__':

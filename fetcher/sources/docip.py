@@ -13,10 +13,7 @@
 __author__ = 'JHao'
 
 from fetcher.baseFetcher import BaseFetcher
-from handler.logHandler import LogHandler
 from util.webRequest import WebRequest
-
-logger = LogHandler("fetcher")
 
 
 class DocipFetcher(BaseFetcher):
@@ -27,11 +24,11 @@ class DocipFetcher(BaseFetcher):
 
     def fetch(self):
         r = WebRequest().get("https://www.docip.net/data/free.json", timeout=10)
-        try:
-            for each in r.json['data']:
-                yield each['ip']
-        except Exception as e:
-            logger.error("ProxyFetch - docip: %s" % e)
+        proxies = r.json.get("data")
+        if not isinstance(proxies, list):
+            raise RuntimeError("docip returned an invalid response")
+        for each in proxies:
+            yield each["ip"]
 
 
 if __name__ == '__main__':

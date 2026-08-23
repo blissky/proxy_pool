@@ -36,7 +36,7 @@ class ConfigHandler:
 
     @property
     def verifyTimeout(self):
-        return int(os.getenv("VERIFY_TIMEOUT", setting.VERIFY_TIMEOUT))
+        return max(1, int(os.getenv("VERIFY_TIMEOUT", setting.VERIFY_TIMEOUT)))
 
     @property
     def timezone(self):

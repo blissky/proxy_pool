@@ -70,6 +70,9 @@ FRONT_PROXY=socks5://user:password@host:1080
 | `STATS_PORT` | Web UI 端口，默认 8083 |
 | `FETCH_INTERVAL_SECONDS` | 代理源刷新间隔，单位秒 |
 | `CHECK_INTERVAL_SECONDS` | 完整同步和可用性检测间隔，单位秒 |
+| `HTTP_URL` | 判断代理是否可用的 HTTP 检测地址 |
+| `HTTPS_URL` | 检测 TLS 支持的 HTTPS 地址，启用证书校验 |
+| `VERIFY_TIMEOUT` | 单个检测地址的访问超时时间，单位秒 |
 | `SING_BOX_CHECK_CONCURRENCY` | 临时检测 sing-box 最大并发数，不包含正式实例 |
 | `SING_BOX_BINARY` | sing-box 命令路径，默认 `sing-box` |
 | `SING_BOX_RUNTIME_DIR` | sing-box 配置和运行目录 |
