@@ -1,0 +1,79 @@
+# Python bytecode, caches and local environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.venv/
+.venv-*/
+
+# Test suites and test-only configuration
+/tests/
+/requirements-test.txt
+/tox.ini
+/.github/workflows/test.yml
+
+# Runtime state, generated data and logs
+/data/
+/log/
+/config.json
+/proxy_pool.pid
+*.log
+
+# Documentation and host-specific deployment material
+/docs/
+/deploy/
+site/
+
+# Secrets, credentials and host-specific configuration
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+*.local
+*.local.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+known_hosts
+
+# Temporary files, editor files and build output
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+/.cache/
+/.codex/
+/.claude/
+/.idea/
+/.vscode/
+build/
+dist/
+*.egg-info/
+/.deploy_*.tgz
+
+# Local Compose overrides and archives
+/docker-compose.*.yml
+*.tgz
+*.zip
+*.tar
+*.tar.gz
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
