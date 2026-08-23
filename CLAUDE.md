@@ -9,7 +9,7 @@
 - `core/node_parser.py` 解析 ss、trojan、vless、vmess、hysteria2 URI 和 Base64 订阅。
 - `core/store.py` 是唯一 Redis 节点存储层。
 - `core/singbox.py` 负责 sing-box 配置、临时单节点检测、并发限制和正式实例蓝绿切换。
-- `core/sync.py` 串行执行抓取、检测、正式配置激活和状态提交。
+- `core/sync.py` 串行执行抓取、检测、正式配置激活和状态提交；抓取候选只保存在内存，只有检测通过并进入新正式配置的节点才能写入 Redis。
 - `fetcher/sources/` 每个来源使用独立 `.py` 文件，下载必须经过前置代理。
 - `proxy_chain.py` 提供代理协议和本地认证连接；8082 到本地 sing-box 不得套用前置代理。
 - `proxy_pool.sh` 只启动内置 Redis 和 `proxy_service.py`，不启动 5010 API。
@@ -39,6 +39,8 @@
 
 - `v2rayfree`：free-nodes/v2rayfree 的 `sub` 文件；
 - `free-servers`：Pawdroid/Free-servers 的 `sub` 文件。
+
+来源扫描默认启用 `fetcher/sources/` 中所有 `BaseFetcher.enabled` 为真的来源；生产配置不得通过排除列表只保留单一来源。
 
 订阅文本先 Base64 解码，再解析 ss、trojan、vless、vmess、hysteria2 链接。单条坏链接只能记录并跳过，不得中断整个来源。来源下载、解析和远端节点访问均遵守前置代理配置。
 

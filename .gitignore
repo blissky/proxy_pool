@@ -57,6 +57,7 @@ known_hosts
 *.swp
 *.swo
 *~
+*_tmp.*
 /.cache/
 /.codex/
 /.claude/

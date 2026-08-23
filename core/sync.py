@@ -6,7 +6,7 @@ import time
 from core.singbox import NodeDetector, SingBoxSupervisor
 from core.store import NodeStore
 from handler.configHandler import ConfigHandler
-from helper.fetch import Fetcher
+from helper.fetch import Fetcher, get_fetcher_source_count
 
 
 class SyncManager:
@@ -54,6 +54,10 @@ class SyncManager:
             value["redis"] = {"ok": self.store.ping(), "count": self.store.count()}
         except Exception as exc:
             value["redis"] = {"ok": False, "error": str(exc)}
+        try:
+            value["source_count"] = get_fetcher_source_count(self.conf.fetcherExclude)
+        except Exception:
+            value["source_count"] = 0
         return value
 
     def _set(self, **changes):
@@ -94,8 +98,8 @@ class SyncManager:
         merged.extend(node for node in existing.values() if node.node_id not in fetched_ids)
         return merged
 
-    def _commit(self, node_ids, revision):
-        self.store.update_sync(node_ids, revision)
+    def _commit(self, nodes, revision):
+        self.store.replace_active(nodes, revision)
 
     def run_sync(self, force_fetch=False):
         with self.lock:
@@ -110,7 +114,6 @@ class SyncManager:
             if do_fetch:
                 fetched = Fetcher().run(source_callback=self._source_report)
                 nodes = self._merge_fetched(fetched)
-                self.store.put_many(nodes)
                 self.last_fetch = now
             self._set(fetched=len(nodes), phase="checking", total=len(nodes), current=0)
             checked = []
@@ -133,7 +136,6 @@ class SyncManager:
                 if old:
                     node.synced = old.synced
                     node.config_revision = old.config_revision
-            self.store.put_many(checked)
             alive = [node for node in checked if node.last_status]
             self._set(alive=len(alive), failed=len(checked) - len(alive), phase="activating")
             if not alive and self.supervisor.endpoint():

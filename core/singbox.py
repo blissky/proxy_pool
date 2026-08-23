@@ -295,7 +295,7 @@ class SingBoxSupervisor:
                 old_instance = self.active
                 self.active = new_instance
                 try:
-                    commit([node.node_id for node in nodes], revision)
+                    commit(nodes, revision)
                 except Exception:
                     self.active = old_instance
                     raise

@@ -23,9 +23,10 @@ Compose 只拉取 GitHub Container Registry 中的 `ghcr.io/blissky/proxy_pool:l
 
 ```text
 代理源
-  -> 节点解析和 Redis 入库
+  -> 节点解析（仅保存在本轮内存候选集合）
   -> 单节点临时 sing-box 并发检测
   -> HTTP 检测和严格 TLS 证书检测
+  -> 只将通过检测并进入新正式 sing-box 的节点写入 Redis
   -> 生成新正式 sing-box
   -> 新实例就绪后切换 8082
   -> 更新 synced/config_revision
@@ -40,6 +41,7 @@ Web 控制台提供：
 - 抓取、检测、配置生成和切换进度；
 - sing-box 运行状态、active 端口和配置版本；
 - Redis 连接状态和节点统计；
+- 已入库节点、支持 TLS 节点和当前启用的代理源数量；
 - 来源抓取日志和节点列表；
 - 节点的协议、TLS 支持状态、同步状态、来源和最近检测时间。
 

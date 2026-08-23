@@ -43,20 +43,12 @@ class NodeStore:
         return node.node_id
 
     def put(self, node):
+        """Update an already admitted node without admitting new candidates."""
         if not isinstance(node, ProxyNode):
             node = ProxyNode.from_dict(node)
-        return self.connection.hset(self.table, self._key(node), node.to_json)
-
-    def put_many(self, nodes):
-        if not nodes:
+        if not self.connection.hexists(self.table, self._key(node)):
             return 0
-        pipe = self.connection.pipeline()
-        for node in nodes:
-            if not isinstance(node, ProxyNode):
-                node = ProxyNode.from_dict(node)
-            pipe.hset(self.table, self._key(node), node.to_json)
-        pipe.execute()
-        return len(nodes)
+        return self.connection.hset(self.table, self._key(node), node.to_json)
 
     def get(self, node_id):
         value = self.connection.hget(self.table, node_id)
@@ -77,14 +69,19 @@ class NodeStore:
     def delete(self, node_id):
         return bool(self.connection.hdel(self.table, node_id))
 
-    def update_sync(self, node_ids, revision):
-        selected = set(node_ids)
-        nodes = self.all()
-        pipe = self.connection.pipeline()
-        for node in nodes:
-            node.synced = node.node_id in selected
-            node.config_revision = revision if node.synced else ""
+    def replace_active(self, nodes, revision):
+        """Commit only nodes that passed detection and entered the new config."""
+        selected = list(nodes or [])
+        selected_ids = {node.node_id for node in selected}
+        existing_ids = set(self.connection.hkeys(self.table))
+        pipe = self.connection.pipeline(transaction=True)
+        for node in selected:
+            node.synced = True
+            node.config_revision = revision
             pipe.hset(self.table, node.node_id, node.to_json)
+        stale_ids = existing_ids - selected_ids
+        if stale_ids:
+            pipe.hdel(self.table, *stale_ids)
         pipe.execute()
         return len(selected)
 
