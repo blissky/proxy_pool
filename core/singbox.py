@@ -59,6 +59,10 @@ def _front_outbound(value):
 
 def _node_outbound(node):
     config = deepcopy(node.outbound_config)
+    tls = config.get("tls")
+    if isinstance(tls, dict) and tls.get("enabled"):
+        # Source-provided TLS nodes may use self-signed or mismatched certificates.
+        tls["insecure"] = True
     protocol = config.get("type", node.protocol)
     if protocol == "ss":
         protocol = "shadowsocks"
