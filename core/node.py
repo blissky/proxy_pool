@@ -46,7 +46,7 @@ class ProxyNode:
                  remote_username="", remote_password="", inbound_username="",
                  inbound_password="", tls=False, synced=False, config_revision="",
                  fail_count=0, check_count=0, last_status=False, last_time="",
-                 region="", node_id="", anonymous=""):
+                 node_id="", anonymous=""):
         protocol = (protocol or "http").lower()
         if protocol not in PROTOCOLS:
             raise ValueError("unsupported node protocol: {}".format(protocol))
@@ -65,7 +65,6 @@ class ProxyNode:
         self.check_count = int(check_count or 0)
         self.last_status = _bool(last_status)
         self.last_time = last_time or ""
-        self.region = region or ""
         self.anonymous = anonymous or ""
         self.node_id = node_id or node_fingerprint(self.protocol, self.outbound_config)
 
@@ -110,7 +109,7 @@ class ProxyNode:
             synced=value.get("synced", False), config_revision=value.get("config_revision", ""),
             fail_count=value.get("fail_count", 0), check_count=value.get("check_count", 0),
             last_status=value.get("last_status", False), last_time=value.get("last_time", ""),
-            region=value.get("region", ""), node_id=value.get("node_id", ""),
+            node_id=value.get("node_id", ""),
             anonymous=value.get("anonymous", ""),
         )
 
@@ -193,7 +192,6 @@ class ProxyNode:
             "check_count": self.check_count,
             "last_status": bool(self.last_status),
             "last_time": self.last_time,
-            "region": self.region,
             "anonymous": self.anonymous,
         }
 

@@ -89,7 +89,6 @@ class SyncManager:
                 node.fail_count = old.fail_count
                 node.last_status = old.last_status
                 node.last_time = old.last_time
-                node.region = old.region
             merged.append(node)
         fetched_ids = {node.node_id for node in merged}
         # Keep nodes from earlier fetches until the availability detector

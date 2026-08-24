@@ -3,15 +3,18 @@
 
 import argparse
 import base64
+import hmac
 import json
 import os
 import random
+import secrets
 import select
 import signal
 import socket
 import threading
 import time
 from collections import deque
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from core.store import NodeStore
@@ -21,14 +24,17 @@ from proxy_chain import connect_to_proxy, connect_via_proxy
 
 
 CONFIG_FILE = os.getenv("CONFIG_FILE", "config.json")
+PROXY_TIMEOUT = max(1, int(os.getenv("PROXY_TIMEOUT", "5")))
+FAIL_THRESHOLD = max(1, int(os.getenv("FAIL_THRESHOLD", "2")))
+WEBUI_ACCESS_TOKEN = os.getenv("WEBUI_ACCESS_TOKEN", "sk-change-me")
+WEBUI_SESSION_TIMEOUT_SECONDS = max(
+    1, int(os.getenv("WEBUI_SESSION_TIMEOUT_SECONDS", "1800")),
+)
 CONFIG_DEFAULTS = {
     "listen": "0.0.0.0",
     "port": 8082,
     "stats_port": 8083,
     "max_clients": 100,
-    "fail_threshold": 3,
-    "timeout": 10,
-    "retries": 2,
 }
 
 
@@ -71,6 +77,72 @@ class Config:
             with open(self.path, "w", encoding="utf-8") as stream:
                 json.dump(self.get_all(), stream, ensure_ascii=False, indent=2)
         return changed
+
+
+class WebAuth:
+    COOKIE_NAME = "proxypool_session"
+
+    def __init__(self, access_token, session_timeout=1800):
+        self.access_token = str(access_token)
+        self.session_timeout = max(1, int(session_timeout))
+        self.lock = threading.RLock()
+        self.sessions = {}
+
+    @classmethod
+    def _cookie_session(cls, cookie_header):
+        try:
+            cookie = SimpleCookie()
+            cookie.load(cookie_header or "")
+        except CookieError:
+            return ""
+        item = cookie.get(cls.COOKIE_NAME)
+        return item.value if item else ""
+
+    def _prune(self, now):
+        expired = [
+            session for session, last_seen in self.sessions.items()
+            if now - last_seen >= self.session_timeout
+        ]
+        for session in expired:
+            self.sessions.pop(session, None)
+
+    def login(self, access_token):
+        candidate = str(access_token or "")
+        if not hmac.compare_digest(candidate, self.access_token):
+            return ""
+        session = secrets.token_urlsafe(32)
+        now = time.monotonic()
+        with self.lock:
+            self._prune(now)
+            self.sessions[session] = now
+        return session
+
+    def authenticate(self, cookie_header, touch=False):
+        session = self._cookie_session(cookie_header)
+        if not session:
+            return ""
+        now = time.monotonic()
+        with self.lock:
+            self._prune(now)
+            if session not in self.sessions:
+                return ""
+            if touch:
+                self.sessions[session] = now
+        return session
+
+    def logout(self, cookie_header):
+        session = self._cookie_session(cookie_header)
+        if session:
+            with self.lock:
+                self.sessions.pop(session, None)
+
+    @classmethod
+    def session_cookie(cls, session):
+        return "{}={}; Path=/; HttpOnly; SameSite=Strict".format(cls.COOKIE_NAME, session)
+
+    @classmethod
+    def expired_cookie(cls):
+        return "{}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict".format(cls.COOKIE_NAME)
 
 
 class Logger:
@@ -257,11 +329,12 @@ def _socks_fail(client):
 
 
 class ProxyServer:
-    def __init__(self, pool, supervisor, logger, config):
+    def __init__(self, pool, supervisor, logger, config, timeout=PROXY_TIMEOUT):
         self.pool = pool
         self.supervisor = supervisor
         self.logger = logger
         self.config = config
+        self.timeout = timeout
         self.semaphore = threading.BoundedSemaphore(config.get("max_clients"))
 
     def select_node(self, tls_required=False):
@@ -273,7 +346,7 @@ class ProxyServer:
         return None, None
 
     def serve_one(self, client):
-        client.settimeout(self.config.get("timeout"))
+        client.settimeout(self.timeout)
         first = client.recv(1)
         if not first:
             return
@@ -296,7 +369,7 @@ class ProxyServer:
             try:
                 upstream = connect_via_proxy(
                     "socks5", host, port, dest_host, dest_port,
-                    timeout=self.config.get("timeout"),
+                    timeout=self.timeout,
                     proxy_username=node.inbound_username,
                     proxy_password=node.inbound_password,
                 )
@@ -320,13 +393,13 @@ class ProxyServer:
             if header.is_connect:
                 upstream = connect_via_proxy(
                     "http", host, port, dest_host, dest_port,
-                    timeout=self.config.get("timeout"),
+                    timeout=self.timeout,
                     proxy_username=node.inbound_username,
                     proxy_password=node.inbound_password,
                 )
                 client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             else:
-                upstream = connect_to_proxy(host, port, self.config.get("timeout"))
+                upstream = connect_to_proxy(host, port, self.timeout)
                 upstream.sendall(header.to_upstream(node.inbound_username, node.inbound_password))
             self.pool.success(node)
             _relay(client, upstream)
@@ -373,19 +446,38 @@ class ProxyServer:
             listener.close()
 
 
-def start_control_server(logger, pool, sync, config, stop_event):
+def start_control_server(logger, pool, sync, config, stop_event, auth):
     class ControlHandler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             return
 
-        def send_json(self, payload, code=200):
+        def send_json(self, payload, code=200, headers=None):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
+            for key, value in (headers or {}).items():
+                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
+
+        def redirect(self, location):
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def require_auth(self, page=False, touch=False):
+            session = auth.authenticate(self.headers.get("Cookie"), touch=touch)
+            if session:
+                return session
+            if page:
+                self.redirect("/login.html")
+            else:
+                self.send_json({"error": "unauthorized"}, 401)
+            return ""
 
         def body(self):
             length = int(self.headers.get("Content-Length", "0") or 0)
@@ -398,11 +490,26 @@ def start_control_server(logger, pool, sync, config, stop_event):
 
         def do_GET(self):
             path = self.path.split("?", 1)[0]
+            if path == "/health":
+                self.send_json({"ok": True})
+                return
+            if path in ("/login", "/login.html"):
+                if auth.authenticate(self.headers.get("Cookie")):
+                    self.redirect("/")
+                else:
+                    self.send_file("login.html")
+                return
             if path in ("/", "/index.html"):
+                if not self.require_auth(page=True, touch=True):
+                    return
                 self.send_file("index.html")
                 return
             if path == "/pool.html":
+                if not self.require_auth(page=True, touch=True):
+                    return
                 self.send_file("pool.html")
+                return
+            if not self.require_auth():
                 return
             if path in ("/stats", "/config"):
                 data = sync.snapshot()
@@ -442,11 +549,34 @@ def start_control_server(logger, pool, sync, config, stop_event):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
 
         def do_POST(self):
             path = self.path.split("?", 1)[0]
+            if path == "/auth/login":
+                session = auth.login(self.body().get("access_token"))
+                if not session:
+                    self.send_json({"error": "invalid access token"}, 401)
+                    return
+                self.send_json(
+                    {"ok": True},
+                    headers={"Set-Cookie": auth.session_cookie(session)},
+                )
+                return
+            if not self.require_auth(touch=True):
+                return
+            if path == "/auth/logout":
+                auth.logout(self.headers.get("Cookie"))
+                self.send_json(
+                    {"ok": True},
+                    headers={"Set-Cookie": auth.expired_cookie()},
+                )
+                return
+            if path == "/auth/touch":
+                self.send_json({"ok": True})
+                return
             if path == "/sync":
                 if not sync.start_async(force_fetch=True):
                     self.send_json({"error": "同步任务正在运行"}, 409)
@@ -464,10 +594,12 @@ def start_control_server(logger, pool, sync, config, stop_event):
             self.send_json({"error": "not found"}, 404)
 
         def do_PUT(self):
+            if not self.require_auth(touch=True):
+                return
             if self.path.split("?", 1)[0] != "/config":
                 self.send_json({"error": "not found"}, 404)
                 return
-            integer_fields = {"port", "stats_port", "max_clients", "fail_threshold", "timeout", "retries"}
+            integer_fields = {"port", "stats_port", "max_clients"}
             values = {}
             for key, value in self.body().items():
                 if key in integer_fields:
@@ -503,11 +635,12 @@ def main(args=None):
     logger = Logger()
     store = NodeStore()
     sync = SyncManager(logger, store=store)
-    pool = RuntimePool(store, sync.supervisor, threshold=config.get("fail_threshold"))
+    pool = RuntimePool(store, sync.supervisor, threshold=FAIL_THRESHOLD)
+    auth = WebAuth(WEBUI_ACCESS_TOKEN, WEBUI_SESSION_TIMEOUT_SECONDS)
     stop_event = threading.Event()
-    control = start_control_server(logger, pool, sync, config, stop_event)
+    control = start_control_server(logger, pool, sync, config, stop_event, auth)
     sync.start_scheduler()
-    proxy_server = ProxyServer(pool, sync.supervisor, logger, config)
+    proxy_server = ProxyServer(pool, sync.supervisor, logger, config, timeout=PROXY_TIMEOUT)
 
     def stop(_signum=None, _frame=None):
         stop_event.set()

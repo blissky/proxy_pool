@@ -15,6 +15,14 @@ services:
       PROXY_LISTEN: "0.0.0.0"
       PROXY_PORT: "8082"
       STATS_PORT: "8083"
+      # Client handshake, upstream connection and blocked-write timeout, in seconds.
+      PROXY_TIMEOUT: "5"
+      # Consecutive connection failures before a node is removed from runtime selection.
+      FAIL_THRESHOLD: "2"
+      # Web control-panel access token. Change this before exposing port 8083.
+      WEBUI_ACCESS_TOKEN: "sk-change-me"
+      # Require a new login after this many seconds without user activity.
+      WEBUI_SESSION_TIMEOUT_SECONDS: "1800"
       # Minimum interval between source refreshes, in seconds (3600 = 1 hour).
       FETCH_INTERVAL_SECONDS: "3600"
       # Full sync and availability detection interval, in seconds (600 = 10 minutes).
@@ -27,7 +35,9 @@ services:
       VERIFY_TIMEOUT: "5"
       # Maximum parallel temporary sing-box processes used for node checks.
       # The active formal sing-box process is not included.
-      SING_BOX_CHECK_CONCURRENCY: "64"
+      # Measured container peaks on a 1.915 GiB Kali VM with about 3,300 nodes:
+      # 16 = 272 MiB, 32 = 472 MiB, 64 = 811 MiB. Actual usage varies by nodes.
+      SING_BOX_CHECK_CONCURRENCY: "16"
       # Fixed sing-box runtime binary and generated configuration directory.
       SING_BOX_BINARY: "sing-box"
       SING_BOX_RUNTIME_DIR: "/data/sing-box"

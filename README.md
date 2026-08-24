@@ -17,6 +17,10 @@ Compose 只拉取 GitHub Container Registry 中的 `ghcr.io/blissky/proxy_pool:l
 | `http://127.0.0.1:8083` | Web 控制台 |
 | `127.0.0.1:8082` | HTTP/SOCKS5 对外代理入口 |
 
+首次打开 Web 控制台时需要输入 Compose 中 `WEBUI_ACCESS_TOKEN`配置的 Access Token。默认值为 `sk-change-me`，仅用于首次启动，正式部署必须更换。登录状态保存在服务端内存中，连续 30 分钟没有键盘、鼠标、触摸、滚动或控制操作后需要重新登录；容器重启后所有会话也会失效。
+
+会话 Cookie 使用 `HttpOnly`和`SameSite=Strict`，Access Token 不保存在浏览器存储中。默认部署使用明文 HTTP，在不可信网络中应通过 HTTPS 反向代理访问 8083，否则 Access Token 和会话仍可能被旁路读取。8082 代理入口不使用此 WebUI Access Token。
+
 8082 只连接当前正式 sing-box 的本地 mixed 端口。Redis 节点选择、本地认证路由、协议转换和远端连接由同步管理器与 sing-box 协作完成。没有可用节点或 sing-box 未就绪时不会直连目标站点。
 
 ## 同步流程
@@ -33,7 +37,17 @@ Compose 只拉取 GitHub Container Registry 中的 `ghcr.io/blissky/proxy_pool:l
   -> 关闭旧实例
 ```
 
-每轮同步使用蓝绿切换，旧实例在新实例就绪前继续服务。临时检测实例的并发数由 `SING_BOX_CHECK_CONCURRENCY` 控制，不包含正式实例。
+每轮同步使用蓝绿切换，旧实例在新实例就绪前继续服务。临时检测实例的并发数由 `SING_BOX_CHECK_CONCURRENCY` 控制，不包含正式实例，默认值为 16。
+
+以下数据是在可用内存显示为 1.915 GiB 的 Kali 虚拟机上，使用约 3,300 个候选节点和 5 秒检测超时测得的容器 cgroup 内存采样峰值：
+
+| 检测并发数 | 候选节点数 | 容器内存采样峰值 | 同步耗时 |
+| ---: | ---: | ---: | ---: |
+| 16（默认） | 3336 | 272.1 MiB | 约 987 秒 |
+| 32 | 3406 | 471.6 MiB | 约 526 秒 |
+| 64 | 3445 | 810.3 MiB | 约 285 秒 |
+
+这些数据用于估算部署容量，不是固定上限。实际峰值会随候选节点数量、协议构成、检测目标、超时时间和 sing-box 版本变化；生产环境应预留额外内存，内存受限时保持默认并发数 16。
 
 Web 控制台提供：
 
@@ -68,12 +82,16 @@ FRONT_PROXY=socks5://user:password@host:1080
 | `DB_CONN` | Redis 连接 URI |
 | `PROXY_LISTEN`、`PROXY_PORT` | 8082 监听地址和端口 |
 | `STATS_PORT` | Web UI 端口，默认 8083 |
+| `PROXY_TIMEOUT` | 客户端握手、上游连接和阻塞写入超时，单位秒，默认 5；不限制已建立隧道的总时长或 AI 响应等待时间 |
+| `FAIL_THRESHOLD` | 节点连续连接失败后的运行时熔断阈值，默认 2；成功建立一次连接会清零该节点的失败计数 |
+| `WEBUI_ACCESS_TOKEN` | Web 控制台 Access Token，默认 `sk-change-me`，正式部署必须更换 |
+| `WEBUI_SESSION_TIMEOUT_SECONDS` | Web 控制台无用户操作后的会话过期时间，单位秒，默认 1800 |
 | `FETCH_INTERVAL_SECONDS` | 代理源刷新间隔，单位秒 |
 | `CHECK_INTERVAL_SECONDS` | 完整同步和可用性检测间隔，单位秒 |
 | `HTTP_URL` | 判断代理是否可用的 HTTP 检测地址 |
 | `HTTPS_URL` | 检测 TLS 支持的 HTTPS 地址，启用证书校验 |
 | `VERIFY_TIMEOUT` | 单个检测地址的访问超时时间，单位秒 |
-| `SING_BOX_CHECK_CONCURRENCY` | 临时检测 sing-box 最大并发数，不包含正式实例 |
+| `SING_BOX_CHECK_CONCURRENCY` | 临时检测 sing-box 最大并发数，不包含正式实例，默认 16；内存估算见上表 |
 | `SING_BOX_BINARY` | sing-box 命令路径，默认 `sing-box` |
 | `SING_BOX_RUNTIME_DIR` | sing-box 配置和运行目录 |
 | `FRONT_PROXY` | 抓取、检测和远端节点访问使用的前置代理 |

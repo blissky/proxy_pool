@@ -10,7 +10,7 @@
 </head>
 <body>
 <main class="wrap">
-<section class="bar"><div><h1>ProxyPool 控制台</h1><div class="muted">8082 对外代理入口 · 8083 管理界面 · sing-box 多协议出口</div></div><div class="actions"><button class="btn" id="sync">立即同步</button><a class="btn secondary" href="/pool.html">节点列表</a></div></section>
+<section class="bar"><div><h1>ProxyPool 控制台</h1><div class="muted">8082 对外代理入口 · 8083 管理界面 · sing-box 多协议出口</div></div><div class="actions"><button class="btn" id="sync">立即同步</button><a class="btn secondary" href="/pool.html">节点列表</a><button class="btn secondary" id="logout">退出</button></div></section>
 <section class="panel"><div class="grid" id="stats"></div></section>
 <section class="panel"><div class="status"><div>同步状态<strong id="syncState">加载中</strong><div class="progress"><i id="progress"></i></div></div><div>正式 sing-box<strong id="boxState">加载中</strong></div><div>存储状态<strong id="redisState">加载中</strong></div><div>下一次同步<strong id="nextSync">-</strong></div></div></section>
 <section class="panel"><div class="muted">实时日志</div><div class="logs" id="logs"></div></section>
@@ -18,10 +18,12 @@
 <script>
 const $=id=>document.getElementById(id);let seq=0;
 function esc(v){return String(v??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+async function request(url,options){const r=await fetch(url,options);if(r.status===401){location.replace('/login.html');throw new Error('登录已过期')}return r}
+let lastTouch=0;function touch(){const now=Date.now();if(now-lastTouch<5000)return;lastTouch=now;request('/auth/touch',{method:'POST'}).catch(()=>{})}['pointermove','pointerdown','keydown','touchstart','wheel'].forEach(name=>addEventListener(name,touch,{passive:true}));
 function render(d){const c=d.redis?.count||{};const cards=[['total','已入库节点',''],['synced','当前已同步','good'],['tls','支持 TLS','good'],['source_count','代理源数量','']];$('stats').innerHTML=cards.map(x=>`<div class="stat"><b class="${x[2]}">${x[0]==='source_count'?(d.source_count??0):(c[x[0]]??0)}</b><span>${x[1]}</span></div>`).join('');const s=d.status||'idle';const p=d.total?Math.round((d.current||0)*100/d.total):0;$('syncState').textContent=`${s} · ${d.phase||'idle'} (${d.current||0}/${d.total||0})`;$('progress').style.width=p+'%';const b=d.singbox||{};$('boxState').textContent=b.running?`运行中 · 端口 ${b.port} · ${b.revision}`:`未就绪${b.error?' · '+b.error:''}`;$('redisState').textContent=d.redis?.ok?'连接正常':'连接失败';const left=Math.max(0,Math.ceil((d.next_sync||0)-Date.now()/1000));$('nextSync').textContent=left?`${left} 秒后`:'待同步'}
-async function load(){try{const r=await fetch('/stats');render(await r.json())}catch(e){$('syncState').textContent=e.message}}
-async function logs(){const r=await fetch('/logs?since='+seq);const d=await r.json();for(const x of d.logs||[]){const line=document.createElement('div');line.className=x.level.toLowerCase();line.innerHTML=`#${x.seq} ${esc(x.msg)}`;$('logs').appendChild(line);seq=Math.max(seq,x.seq)}while($('logs').childNodes.length>800)$('logs').removeChild($('logs').firstChild);$('logs').scrollTop=$('logs').scrollHeight}
-$('sync').onclick=async()=>{const r=await fetch('/sync',{method:'POST'});if(r.status===409){alert('同步任务正在运行')}};load();logs();setInterval(load,1500);setInterval(logs,1200)
+async function load(){try{const r=await request('/stats');render(await r.json())}catch(e){$('syncState').textContent=e.message}}
+async function logs(){const r=await request('/logs?since='+seq);const d=await r.json();for(const x of d.logs||[]){const line=document.createElement('div');line.className=x.level.toLowerCase();line.innerHTML=`#${x.seq} ${esc(x.msg)}`;$('logs').appendChild(line);seq=Math.max(seq,x.seq)}while($('logs').childNodes.length>800)$('logs').removeChild($('logs').firstChild);$('logs').scrollTop=$('logs').scrollHeight}
+$('sync').onclick=async()=>{const r=await request('/sync',{method:'POST'});if(r.status===409){alert('同步任务正在运行')}};$('logout').onclick=async()=>{await request('/auth/logout',{method:'POST'});location.replace('/login.html')};load();logs();setInterval(load,1500);setInterval(logs,1200)
 </script>
 </body>
 </html>
