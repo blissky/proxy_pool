@@ -3,8 +3,6 @@ services:
     image: ghcr.io/blissky/proxy_pool:latest
     pull_policy: always
     container_name: proxy_pool
-    mem_limit: 1g
-    cpus: '1'
     restart: unless-stopped
     ports:
       # Nginx on the host publishes these ports externally.
