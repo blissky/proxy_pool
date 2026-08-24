@@ -42,8 +42,8 @@ services:
       # Persistent Web configuration and runtime data directory.
       DATA_DIR: "/data"
       CONFIG_FILE: "/data/config.json"
-      # Required for source downloads, node checks and formal node connections.
-      # Set a real URL before deployment; direct fallback is intentionally disabled.
+      # Optional front proxy for source downloads, checks and formal node connections.
+      # Leave empty to connect directly; set a URL to route all three paths through it.
       FRONT_PROXY: ""
     volumes:
       - ./data:/data

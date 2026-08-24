@@ -12,7 +12,7 @@ docker compose ps
 
 Compose 只拉取 GitHub Container Registry 中的 `ghcr.io/blissky/proxy_pool:latest`，不会在本地构建镜像。sing-box 由 Dockerfile 从官方签名 APT 源安装固定版本，仓库不保存二进制文件。
 
-部署前必须在 `docker-compose.yml` 中把 `FRONT_PROXY` 设置为可用的前置代理。该值为空或连接失败时，抓取和同步任务会明确失败，不会回退到服务器直连。
+`FRONT_PROXY` 是可选配置。该值为空时，代理源下载、节点检测和正式节点连接均从服务器直接发起；配置后，这三条链路统一经过指定的前置代理。
 
 | 地址 | 用途 |
 | --- | --- |
@@ -71,7 +71,7 @@ Web 控制台提供：
 
 ## 前置代理
 
-前置代理用于下载代理源和 sing-box 访问远端节点：
+前置代理可用于下载代理源和 sing-box 访问远端节点：
 
 ```text
 代理池服务器 -> 前置代理 -> 远端节点 -> 目标站点
@@ -85,7 +85,7 @@ FRONT_PROXY=socks5://user:password@host:1080
 
 支持 `http://`、`https://`、`socks4://`、`socks4a://`、`socks5://` 和 `socks5h://`。8082 到本地 sing-box mixed 端口的连接不经过前置代理，避免形成代理环路。
 
-前置代理是外连安全边界，不是可选加速配置。代理源下载、检测节点连接和正式节点连接全部经过它；未配置或连接失败时禁止直连，以免向代理源或远端节点暴露代理池服务器 IP。
+配置 `FRONT_PROXY` 后，代理源下载、检测节点连接和正式节点连接全部经过它；连接失败时任务或节点连接直接失败，不会绕过已配置的前置代理。该值为空时使用服务器直连，因此代理源和远端节点可以看到代理池服务器的出口 IP。无论是否配置前置代理，未匹配到节点的请求仍由 sing-box 的最终 `block` 路由拒绝，不会直接连接客户端请求的目标站点。
 
 ## Compose 环境变量
 
@@ -106,7 +106,7 @@ FRONT_PROXY=socks5://user:password@host:1080
 | `SING_BOX_CHECK_CONCURRENCY` | 单个检测 sing-box 上同时探测的节点数，默认 16 |
 | `SING_BOX_BINARY` | sing-box 命令路径，默认 `sing-box` |
 | `SING_BOX_RUNTIME_DIR` | sing-box 配置和运行目录 |
-| `FRONT_PROXY` | 抓取、检测和远端节点访问强制使用的前置代理；不能为空 |
+| `FRONT_PROXY` | 抓取、检测和远端节点访问使用的可选前置代理；为空时直连 |
 | `DATA_DIR`、`CONFIG_FILE` | Web 配置和运行数据目录 |
 
 ## 本地检查

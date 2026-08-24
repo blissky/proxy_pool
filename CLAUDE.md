@@ -10,7 +10,7 @@
 - `core/store.py` 是唯一 Redis 节点存储层。
 - `core/singbox.py` 负责 sing-box 配置、单进程多节点认证检测、请求并发限制和正式实例蓝绿切换。
 - `core/sync.py` 独立调度抓取与检测同步；抓取候选先以未同步状态写入 Redis，检测使用 Redis 快照并在新正式实例就绪后提交状态。
-- `fetcher/sources/` 每个来源使用独立 `.py` 文件，下载必须经过前置代理。
+- `fetcher/sources/` 每个来源使用独立 `.py` 文件；配置 `FRONT_PROXY` 时经过前置代理，为空时直连。
 - `proxy_chain.py` 提供代理协议和本地认证连接；8082 到本地 sing-box 不得套用前置代理。
 - `proxy_pool.sh` 只启动内置 Redis 和 `proxy_service.py`，不启动 5010 API。
 - `web/` 是 8083 Web 控制台和登录页；不另建文件型代理池。
@@ -53,7 +53,7 @@
 
 来源扫描默认启用 `fetcher/sources/` 中所有 `BaseFetcher.enabled` 为真的来源；生产配置不得通过排除列表只保留单一来源。
 
-订阅文本先 Base64 解码，再解析 ss、trojan、vless、vmess、hysteria2 链接。单条坏链接只能记录并跳过，不得中断整个来源。来源下载、检测和正式远端节点访问必须使用 `FRONT_PROXY`；为空或失败时禁止回退直连。
+订阅文本先 Base64 解码，再解析 ss、trojan、vless、vmess、hysteria2 链接。单条坏链接只能记录并跳过，不得中断整个来源。来源下载、检测和正式远端节点访问在 `FRONT_PROXY` 非空时必须统一使用该代理，连接失败时不得绕过；为空时三条链路均直连。
 
 ## 配置和命令
 

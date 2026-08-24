@@ -227,8 +227,6 @@ class NodeDetector:
         with self.lock:
             if self.stopped:
                 raise RuntimeError("node detector is stopping")
-        if not resolve_front_proxy(self.front_proxy):
-            raise RuntimeError("FRONT_PROXY is required for node detection")
         port = find_free_port()
         path = os.path.join(self.runner.runtime_dir, "{}.json".format(uuid.uuid4().hex))
         revision = "check-{}".format(uuid.uuid4().hex[:12])
@@ -383,8 +381,6 @@ class SingBoxSupervisor:
         with self.lock:
             if self.stopped:
                 raise RuntimeError("sing-box supervisor is stopping")
-        if not resolve_front_proxy(self.front_proxy):
-            raise RuntimeError("FRONT_PROXY is required for formal sing-box activation")
         revision = "formal-{}".format(uuid.uuid4().hex[:16])
         port = find_free_port()
         path = os.path.join(self.runner.runtime_dir, "{}.json".format(revision))

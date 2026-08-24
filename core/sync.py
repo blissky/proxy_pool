@@ -7,7 +7,6 @@ from copy import deepcopy
 
 from core.singbox import NodeDetector, SingBoxSupervisor
 from core.store import NodeStore
-from front_proxy import require_front_proxy
 from handler.configHandler import ConfigHandler
 from helper.fetch import Fetcher, get_fetcher_source_count
 
@@ -161,7 +160,6 @@ class SyncManager:
     def _execute_fetch(self):
         batch_id, start_epoch = self._start_fetch_batch()
         try:
-            require_front_proxy(self.conf.frontProxy)
             nodes = Fetcher().run(source_callback=self._source_report)
             if self.stop_event.is_set():
                 raise RuntimeError("服务正在停止，取消抓取提交")
@@ -237,7 +235,6 @@ class SyncManager:
 
     def _execute_check(self):
         try:
-            require_front_proxy(self.conf.frontProxy)
             snapshot = deepcopy(self.store.all())
             snapshot_ids = {node.node_id for node in snapshot}
             self._set_check(phase="checking", total=len(snapshot), current=0)

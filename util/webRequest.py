@@ -20,7 +20,7 @@ import time
 
 from handler.logHandler import LogHandler
 from handler.configHandler import ConfigHandler
-from front_proxy import front_proxy_requests, require_front_proxy
+from front_proxy import front_proxy_requests
 
 requests.packages.urllib3.disable_warnings()
 
@@ -32,12 +32,15 @@ class WebRequest(object):
         self.log = LogHandler(self.name, file=False)
         self.response = Response()
         self.session = requests.Session()
+        self.session.trust_env = False
 
     @staticmethod
     def _with_front_proxy(kwargs):
-        """Force source downloads through the configured front proxy."""
-        proxy = require_front_proxy(ConfigHandler().frontProxy)
-        kwargs["proxies"] = front_proxy_requests(proxy)
+        """Use FRONT_PROXY when configured, otherwise connect directly."""
+        kwargs.pop("proxies", None)
+        proxies = front_proxy_requests(ConfigHandler().frontProxy)
+        if proxies:
+            kwargs["proxies"] = proxies
         return kwargs
 
     @property
