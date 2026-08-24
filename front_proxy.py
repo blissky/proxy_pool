@@ -53,6 +53,14 @@ def front_proxy_requests(configured=""):
     return {"http": proxy, "https": proxy}
 
 
+def require_front_proxy(configured=""):
+    """Return the effective front proxy or reject a direct outbound path."""
+    proxy = resolve_front_proxy(configured)
+    if not proxy:
+        raise RuntimeError("FRONT_PROXY is required; direct outbound access is disabled")
+    return proxy
+
+
 def front_proxy_metadata(configured=""):
     """Return safe metadata for the control panel configuration response."""
     environment_value, variable_name = get_environment_front_proxy()

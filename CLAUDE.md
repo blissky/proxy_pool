@@ -8,8 +8,8 @@
 - `core/node.py` 定义结构化 `ProxyNode`；Redis 以节点指纹为 hash key 保存节点及检测状态。
 - `core/node_parser.py` 解析 ss、trojan、vless、vmess、hysteria2 URI 和 Base64 订阅。
 - `core/store.py` 是唯一 Redis 节点存储层。
-- `core/singbox.py` 负责 sing-box 配置、临时单节点检测、并发限制和正式实例蓝绿切换。
-- `core/sync.py` 串行执行抓取、检测、正式配置激活和状态提交；抓取候选只保存在内存，只有检测通过并进入新正式配置的节点才能写入 Redis。
+- `core/singbox.py` 负责 sing-box 配置、单进程多节点认证检测、请求并发限制和正式实例蓝绿切换。
+- `core/sync.py` 独立调度抓取与检测同步；抓取候选先以未同步状态写入 Redis，检测使用 Redis 快照并在新正式实例就绪后提交状态。
 - `fetcher/sources/` 每个来源使用独立 `.py` 文件，下载必须经过前置代理。
 - `proxy_chain.py` 提供代理协议和本地认证连接；8082 到本地 sing-box 不得套用前置代理。
 - `proxy_pool.sh` 只启动内置 Redis 和 `proxy_service.py`，不启动 5010 API。
@@ -19,7 +19,7 @@
 
 ## 节点状态
 
-节点的 `tls` 和 `synced` 必须序列化为真正的 JSON 布尔值。`tls` 表示严格证书校验的 HTTPS 目标访问能力，不表示节点连接服务器的 TLS 配置。`synced` 表示节点是否存在于当前正式 sing-box 配置。节点模型和 Redis JSON 不保存地区字段，不得恢复 `region` 或 `PROXY_REGION`。
+节点的 `tls` 和 `synced` 必须序列化为真正的 JSON 布尔值。`tls` 表示严格证书校验的 HTTPS 目标访问能力，不表示节点连接服务器的 TLS 配置。`synced` 表示节点是否存在于当前正式 sing-box 配置。抓取不得覆盖检测状态，检测提交不得覆盖并行抓取合并的来源。节点模型和 Redis JSON 不保存地区字段，不得恢复 `region` 或 `PROXY_REGION`。
 
 远端认证字段和 sing-box mixed 入站本地认证字段必须分开；日志和 Web UI 不得输出密码、UUID 或私钥。Redis 是唯一节点数据库，sing-box JSON 只能作为运行时配置。
 
@@ -35,14 +35,14 @@
 ## sing-box 规则
 
 - Dockerfile 从可信官方源安装固定版本预编译 sing-box，仓库不放二进制。
-- 每个临时检测进程只包含一个 outbound，使用空闲端口和独立配置目录。
-- `SING_BOX_CHECK_CONCURRENCY` 只限制临时检测进程，不包含正式实例，默认值为 16。
+- 每轮检测只启动一个检测用 sing-box 运行进程，所有快照节点使用独立 outbound 和 `auth_user` 路由。
+- `SING_BOX_CHECK_CONCURRENCY` 只限制共享 mixed 入站上的并发节点探测请求，默认值为 16。
 - 正式实例必须使用本地 `mixed` inbound 和 `auth_user` 路由。
 - 每次同步先启动并探测新实例，再切换 8082 active 端口，最后关闭旧实例。
 - 新实例校验或启动失败时保留旧实例和 Redis 当前同步状态。
 - sing-box 最终失败路由必须阻断，禁止通过 `direct` 泄漏服务器出口。
 
-在 1.915 GiB Kali 虚拟机、约 3300 个候选节点和 5 秒检测超时下，容器实测峰值约为：并发 16 时 272 MiB、并发 32 时 472 MiB、并发 64 时 811 MiB。该数据仅用于容量估算，修改默认并发前必须考虑节点数量、协议构成、超时和可用内存。
+抓取与同步分别由 `FETCH_INTERVAL_SECONDS` 和 `CHECK_INTERVAL_SECONDS` 控制，间隔从对应任务完成后开始计算。启动时先完成首次抓取，再启动首次同步；之后两条耗时链路可以并行，但 Redis 提交必须短时互斥并按字段所有权合并。
 
 ## 来源
 
@@ -53,7 +53,7 @@
 
 来源扫描默认启用 `fetcher/sources/` 中所有 `BaseFetcher.enabled` 为真的来源；生产配置不得通过排除列表只保留单一来源。
 
-订阅文本先 Base64 解码，再解析 ss、trojan、vless、vmess、hysteria2 链接。单条坏链接只能记录并跳过，不得中断整个来源。来源下载、解析和远端节点访问均遵守前置代理配置。
+订阅文本先 Base64 解码，再解析 ss、trojan、vless、vmess、hysteria2 链接。单条坏链接只能记录并跳过，不得中断整个来源。来源下载、检测和正式远端节点访问必须使用 `FRONT_PROXY`；为空或失败时禁止回退直连。
 
 ## 配置和命令
 
@@ -74,4 +74,4 @@ python -m py_compile proxy_service.py core/*.py fetcher/sources/*.py
 python -c "from core.node_parser import parse_node_uri; print(parse_node_uri('vless://uuid@example.com:443'))"
 ```
 
-修改节点模型、Redis 序列化、Web 认证、前置代理、sing-box 进程或 8082 协议处理时，必须补充对应测试。部署验收应确认 5010 不监听、8082/8083 正常、未登录控制 API 返回 401、空闲会话会过期、`/health` 不泄露业务数据、TLS 检测证书校验有效、同步蓝绿切换可回滚、临时检测进程按并发限制回收。
+修改节点模型、Redis 序列化、Web 认证、前置代理、sing-box 进程或 8082 协议处理时，必须补充对应测试。部署验收应确认 5010 不监听、8082/8083 正常、未登录控制 API 返回 401、空闲会话会过期、`/health` 不泄露业务数据、TLS 检测证书校验有效、同步蓝绿切换可回滚、每轮仅有一个检测运行进程且请求并发受限。

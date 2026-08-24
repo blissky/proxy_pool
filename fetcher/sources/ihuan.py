@@ -12,9 +12,6 @@
 """
 __author__ = 'JHao'
 
-from lxml import etree
-import requests
-
 from fetcher.baseFetcher import BaseFetcher
 from util.webRequest import WebRequest
 
@@ -27,12 +24,9 @@ class IhuanFetcher(BaseFetcher):
     enabled = True
 
     def fetch(self):
-        wb = WebRequest()
-        session = requests.session()
-        headers = wb.header
-        session.get(self.url, headers=headers, verify=False) # 必须先请求一起获取cookie
-        res = session.get(self.url, headers=headers, verify=False)
-        tree = etree.HTML(res.text)
+        request = WebRequest()
+        request.get(self.url, verify=False)
+        tree = request.get(self.url, verify=False).tree
         for item in tree.xpath("//table[@class='table table-hover table-bordered']//tr"):
             ip = "".join(item.xpath("./td[1]//text()")).strip()
             port = "".join(item.xpath("./td[2]//text()")).strip()

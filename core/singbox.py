@@ -205,7 +205,7 @@ class SingBoxRunner:
 
 
 class NodeDetector:
-    """Run one temporary sing-box process per node with bounded concurrency."""
+    """Check a node snapshot through one shared authenticated sing-box."""
 
     def __init__(self, binary="sing-box", runtime_dir="/tmp/proxy-pool-singbox",
                  concurrency=4, http_url="http://httpbin.org", https_url="https://www.qq.com",
@@ -216,34 +216,126 @@ class NodeDetector:
         self.https_url = https_url
         self.timeout = timeout
         self.front_proxy = front_proxy
+        self.lock = threading.RLock()
+        self.active = None
+        self.stopped = False
 
     def detect(self, nodes, callback=None):
-        # _port is set immediately before each probe; each detector owns one
-        # process, so this is thread-local through the worker call.
-        results = []
-        with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
-            futures = {}
-            for node in nodes:
-                futures[executor.submit(self._detect_one_with_port, node)] = node
-            for future in as_completed(futures):
-                node, error = future.result()
-                results.append(node)
-                if callback:
-                    callback(node, error, len(results), len(nodes))
-        return results
-
-    def _detect_one_with_port(self, node):
-        return self._detect_one_at_port(node, find_free_port())
-
-    def _detect_one_at_port(self, node, port):
+        nodes = list(nodes or [])
+        if not nodes:
+            return []
+        with self.lock:
+            if self.stopped:
+                raise RuntimeError("node detector is stopping")
+        if not resolve_front_proxy(self.front_proxy):
+            raise RuntimeError("FRONT_PROXY is required for node detection")
+        port = find_free_port()
         path = os.path.join(self.runner.runtime_dir, "{}.json".format(uuid.uuid4().hex))
         revision = "check-{}".format(uuid.uuid4().hex[:12])
+        try:
+            self.runner.write_config(build_config(nodes, port, self.front_proxy), path)
+            self.runner.check(path)
+            valid, invalid = nodes, []
+        except Exception as combined_error:
+            try:
+                self.runner.write_config(build_config([], port, self.front_proxy), path)
+                self.runner.check(path)
+                if len(nodes) == 1:
+                    valid, invalid = [], [(nodes[0], str(combined_error))]
+                else:
+                    middle = len(nodes) // 2
+                    left_valid, left_invalid = self._partition_valid(nodes[:middle], port, path)
+                    right_valid, right_invalid = self._partition_valid(nodes[middle:], port, path)
+                    valid = left_valid + right_valid
+                    invalid = left_invalid + right_invalid
+                if valid:
+                    self.runner.write_config(build_config(valid, port, self.front_proxy), path)
+                    self.runner.check(path)
+            except Exception:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+                raise
+        except BaseException:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+
+        results = []
+        total = len(nodes)
         instance = None
         try:
-            self.runner.write_config(build_config([node], port, self.front_proxy), path)
-            self.runner.check(path)
+            for node, error in invalid:
+                self._mark_failure(node)
+                results.append(node)
+                if callback:
+                    callback(node, error, len(results), total)
+            if not valid:
+                return results
             instance = self.runner.start(path, port, revision, temporary=True)
-            # HTTP controls admission; HTTPS only records TLS capability.
+            with self.lock:
+                if self.stopped:
+                    raise RuntimeError("node detector is stopping")
+                self.active = instance
+            with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
+                futures = {
+                    executor.submit(self._detect_one_at_port, node, port): node
+                    for node in valid
+                }
+                for future in as_completed(futures):
+                    node, error = future.result()
+                    results.append(node)
+                    if callback:
+                        callback(node, error, len(results), total)
+            if not instance.alive:
+                raise RuntimeError("shared detection sing-box exited unexpectedly")
+            return results
+        finally:
+            self.runner.stop(instance)
+            with self.lock:
+                if self.active is instance:
+                    self.active = None
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def stop(self):
+        with self.lock:
+            self.stopped = True
+            instance = self.active
+            self.active = None
+        self.runner.stop(instance)
+
+    def _partition_valid(self, nodes, port, path):
+        """Use bisecting config checks only when the combined config is invalid."""
+        try:
+            self.runner.write_config(build_config(nodes, port, self.front_proxy), path)
+            self.runner.check(path)
+            return list(nodes), []
+        except Exception as exc:
+            if len(nodes) == 1:
+                return [], [(nodes[0], str(exc))]
+            middle = len(nodes) // 2
+            left_valid, left_invalid = self._partition_valid(nodes[:middle], port, path)
+            right_valid, right_invalid = self._partition_valid(nodes[middle:], port, path)
+            return left_valid + right_valid, left_invalid + right_invalid
+
+    @staticmethod
+    def _mark_failure(node):
+        node.check_count += 1
+        node.last_status = False
+        node.tls = False
+        node.synced = False
+        node.config_revision = ""
+        node.fail_count += 1
+        node.last_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+    def _detect_one_at_port(self, node, port):
+        try:
             self._probe_at_port(node, self.http_url, port)
             try:
                 self._probe_at_port(node, self.https_url, port)
@@ -259,20 +351,8 @@ class NodeDetector:
             node.fail_count = max(0, node.fail_count - 1)
             return node, None
         except Exception as exc:
-            node.check_count += 1
-            node.last_status = False
-            node.tls = False
-            node.synced = False
-            node.config_revision = ""
-            node.fail_count += 1
-            node.last_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            self._mark_failure(node)
             return node, str(exc)
-        finally:
-            self.runner.stop(instance)
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
 
     def _probe_at_port(self, node, url, port):
         status, _ = request_via_proxy(
@@ -297,17 +377,26 @@ class SingBoxSupervisor:
         self.active = None
         self.last_error = ""
         self.last_started = 0
+        self.stopped = False
 
     def activate(self, nodes, commit):
+        with self.lock:
+            if self.stopped:
+                raise RuntimeError("sing-box supervisor is stopping")
+        if not resolve_front_proxy(self.front_proxy):
+            raise RuntimeError("FRONT_PROXY is required for formal sing-box activation")
         revision = "formal-{}".format(uuid.uuid4().hex[:16])
         port = find_free_port()
         path = os.path.join(self.runner.runtime_dir, "{}.json".format(revision))
         new_instance = None
-        with self.lock:
-            try:
-                self.runner.write_config(build_config(nodes, port, self.front_proxy), path)
-                self.runner.check(path)
-                new_instance = self.runner.start(path, port, revision)
+        old_instance = None
+        try:
+            self.runner.write_config(build_config(nodes, port, self.front_proxy), path)
+            self.runner.check(path)
+            new_instance = self.runner.start(path, port, revision)
+            with self.lock:
+                if self.stopped:
+                    raise RuntimeError("sing-box supervisor is stopping")
                 old_instance = self.active
                 self.active = new_instance
                 try:
@@ -317,24 +406,26 @@ class SingBoxSupervisor:
                     raise
                 self.last_started = time.time()
                 self.last_error = ""
-                if old_instance:
-                    self.runner.stop(old_instance)
-                    try:
-                        os.unlink(old_instance.config_path)
-                    except OSError:
-                        pass
-                return new_instance
-            except Exception as exc:
-                self.last_error = str(exc)
-                self.runner.stop(new_instance)
+            if old_instance:
                 try:
-                    os.unlink(path)
-                except OSError:
+                    self.runner.stop(old_instance)
+                    os.unlink(old_instance.config_path)
+                except (OSError, RuntimeError, subprocess.SubprocessError):
                     pass
-                raise
+            return new_instance
+        except Exception as exc:
+            with self.lock:
+                self.last_error = str(exc)
+            self.runner.stop(new_instance)
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
 
     def stop(self):
         with self.lock:
+            self.stopped = True
             active = self.active
             self.active = None
         self.runner.stop(active)

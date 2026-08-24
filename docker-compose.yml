@@ -25,9 +25,9 @@ services:
       WEBUI_ACCESS_TOKEN: "sk-change-me"
       # Require a new login after this many seconds without user activity.
       WEBUI_SESSION_TIMEOUT_SECONDS: "1800"
-      # Minimum interval between source refreshes, in seconds (3600 = 1 hour).
+      # Source refresh interval after each fetch finishes, in seconds (21600 = 6 hours).
       FETCH_INTERVAL_SECONDS: "21600"
-      # Full sync and availability detection interval, in seconds (600 = 10 minutes).
+      # Availability sync interval after each check finishes, in seconds (3600 = 1 hour).
       CHECK_INTERVAL_SECONDS: "3600"
       # HTTP target used to decide whether a proxy is available.
       HTTP_URL: "http://httpbin.org"
@@ -35,10 +35,8 @@ services:
       HTTPS_URL: "https://www.bing.com"
       # Per-target availability check timeout, in seconds.
       VERIFY_TIMEOUT: "5"
-      # Maximum parallel temporary sing-box processes used for node checks.
-      # The active formal sing-box process is not included.
-      # Measured container peaks on a 1.915 GiB Kali VM with about 3,300 nodes:
-      # 16 = 272 MiB, 32 = 472 MiB, 64 = 811 MiB. Actual usage varies by nodes.
+      # Maximum node probes sharing the single checker sing-box process.
+      # The checker and active formal process are not counted as probe workers.
       SING_BOX_CHECK_CONCURRENCY: "16"
       # Fixed sing-box runtime binary and generated configuration directory.
       SING_BOX_BINARY: "sing-box"
@@ -46,7 +44,8 @@ services:
       # Persistent Web configuration and runtime data directory.
       DATA_DIR: "/data"
       CONFIG_FILE: "/data/config.json"
-      # Optional front proxy; leave empty to connect directly.
+      # Required for source downloads, node checks and formal node connections.
+      # Set a real URL before deployment; direct fallback is intentionally disabled.
       FRONT_PROXY: ""
     volumes:
       - ./data:/data

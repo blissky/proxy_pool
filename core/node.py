@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 PROTOCOLS = ("http", "socks", "ss", "trojan", "vless", "vmess", "hysteria2")
 LEGACY_TYPES = ("http", "socks")
+RUNTIME_OUTBOUND_FIELDS = {"tag", "detour"}
 
 
 def _bool(value, default=False):
@@ -29,10 +30,34 @@ def _normal(value):
     return value
 
 
-def node_fingerprint(protocol, outbound_config):
+def _identity_outbound(protocol, outbound_config):
+    config = deepcopy(outbound_config or {})
+    for field in RUNTIME_OUTBOUND_FIELDS:
+        config.pop(field, None)
+    config_type = str(config.get("type") or protocol or "http").lower()
+    config["type"] = "shadowsocks" if config_type in ("ss", "shadowsocks") else config_type
+    if config.get("server"):
+        config["server"] = str(config["server"]).lower()
+    if config.get("server_port") is not None:
+        config["server_port"] = int(config["server_port"])
+    tls = config.get("tls")
+    if isinstance(tls, dict):
+        tls.pop("insecure", None)
+        if tls.get("server_name"):
+            tls["server_name"] = str(tls["server_name"]).lower()
+    return config
+
+
+def node_fingerprint(protocol, outbound_config, remote_username="", remote_password=""):
     """Return a stable identifier for all protocol-specific node parameters."""
+    protocol = (protocol or "http").lower()
     payload = json.dumps(
-        {"protocol": protocol, "outbound": _normal(outbound_config)},
+        {
+            "protocol": protocol,
+            "outbound": _normal(_identity_outbound(protocol, outbound_config)),
+            "remote_username": remote_username or "",
+            "remote_password": remote_password or "",
+        },
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -46,7 +71,7 @@ class ProxyNode:
                  remote_username="", remote_password="", inbound_username="",
                  inbound_password="", tls=False, synced=False, config_revision="",
                  fail_count=0, check_count=0, last_status=False, last_time="",
-                 node_id="", anonymous=""):
+                 anonymous=""):
         protocol = (protocol or "http").lower()
         if protocol not in PROTOCOLS:
             raise ValueError("unsupported node protocol: {}".format(protocol))
@@ -66,7 +91,10 @@ class ProxyNode:
         self.last_status = _bool(last_status)
         self.last_time = last_time or ""
         self.anonymous = anonymous or ""
-        self.node_id = node_id or node_fingerprint(self.protocol, self.outbound_config)
+        self.node_id = node_fingerprint(
+            self.protocol, self.outbound_config,
+            self.remote_username, self.remote_password,
+        )
 
     @staticmethod
     def _new_credential(prefix):
@@ -109,7 +137,6 @@ class ProxyNode:
             synced=value.get("synced", False), config_revision=value.get("config_revision", ""),
             fail_count=value.get("fail_count", 0), check_count=value.get("check_count", 0),
             last_status=value.get("last_status", False), last_time=value.get("last_time", ""),
-            node_id=value.get("node_id", ""),
             anonymous=value.get("anonymous", ""),
         )
 

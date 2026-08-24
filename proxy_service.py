@@ -195,6 +195,20 @@ class RuntimePool:
                      if revision is None or node.config_revision == revision]
         return random.choice(nodes) if nodes else None
 
+    def route(self, tls_required=False):
+        if not self.supervisor:
+            return None, None
+        with self.supervisor.lock:
+            endpoint = self.supervisor.endpoint()
+            if not endpoint:
+                return None, None
+            revision = endpoint[2]
+            nodes = [
+                node for node in self.store.active(tls_required=tls_required)
+                if node.config_revision == revision
+            ]
+            return endpoint, random.choice(nodes) if nodes else None
+
     def success(self, node):
         with self.lock:
             self.failures.pop(node.node_id, None)
@@ -204,9 +218,7 @@ class RuntimePool:
             count = self.failures.get(node.node_id, 0) + 1
             self.failures[node.node_id] = count
         if count >= self.threshold:
-            node.synced = False
-            self.store.put(node)
-            return True
+            return self.store.mark_unsynced(node.node_id)
         return False
 
     def stats(self):
@@ -338,12 +350,7 @@ class ProxyServer:
         self.semaphore = threading.BoundedSemaphore(config.get("max_clients"))
 
     def select_node(self, tls_required=False):
-        for _ in range(2):
-            endpoint = self.supervisor.endpoint()
-            node = self.pool.pick(tls_required=tls_required)
-            if endpoint and node and node.config_revision == endpoint[2]:
-                return endpoint, node
-        return None, None
+        return self.pool.route(tls_required=tls_required)
 
     def serve_one(self, client):
         client.settimeout(self.timeout)
@@ -518,12 +525,18 @@ def start_control_server(logger, pool, sync, config, stop_event, auth):
                 return
             if path == "/pool":
                 nodes = []
-                for node in sync.store.all():
-                    item = node.to_dict
-                    item["remote_username"] = "" if item["remote_username"] else ""
-                    item["remote_password"] = ""
-                    item["inbound_password"] = ""
-                    nodes.append(item)
+                for node in sorted(sync.store.all(), key=lambda item: item.node_id):
+                    nodes.append({
+                        "node_id": node.node_id,
+                        "proxy": node.proxy,
+                        "protocol": node.protocol,
+                        "tls": bool(node.tls),
+                        "synced": bool(node.synced),
+                        "source": node.source,
+                        "check_count": node.check_count,
+                        "last_status": bool(node.last_status),
+                        "last_time": node.last_time,
+                    })
                 self.send_json({"total": len(nodes), "items": nodes})
                 return
             if path == "/logs":
@@ -577,9 +590,15 @@ def start_control_server(logger, pool, sync, config, stop_event, auth):
             if path == "/auth/touch":
                 self.send_json({"ok": True})
                 return
+            if path == "/fetch":
+                if not sync.start_fetch_async():
+                    self.send_json({"error": "抓取任务正在运行"}, 409)
+                else:
+                    self.send_json(sync.snapshot(), 202)
+                return
             if path == "/sync":
-                if not sync.start_async(force_fetch=True):
-                    self.send_json({"error": "同步任务正在运行"}, 409)
+                if not sync.start_check_async():
+                    self.send_json({"error": "同步任务正在运行或首次抓取尚未完成"}, 409)
                 else:
                     self.send_json(sync.snapshot(), 202)
                 return

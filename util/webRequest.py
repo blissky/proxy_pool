@@ -20,7 +20,7 @@ import time
 
 from handler.logHandler import LogHandler
 from handler.configHandler import ConfigHandler
-from front_proxy import front_proxy_requests
+from front_proxy import front_proxy_requests, require_front_proxy
 
 requests.packages.urllib3.disable_warnings()
 
@@ -31,14 +31,13 @@ class WebRequest(object):
     def __init__(self, *args, **kwargs):
         self.log = LogHandler(self.name, file=False)
         self.response = Response()
+        self.session = requests.Session()
 
     @staticmethod
     def _with_front_proxy(kwargs):
-        """Apply the front proxy unless the caller selected another proxy."""
-        if kwargs.get("proxies") is None:
-            proxies = front_proxy_requests(ConfigHandler().frontProxy)
-            if proxies:
-                kwargs["proxies"] = proxies
+        """Force source downloads through the configured front proxy."""
+        proxy = require_front_proxy(ConfigHandler().frontProxy)
+        kwargs["proxies"] = front_proxy_requests(proxy)
         return kwargs
 
     @property
@@ -86,7 +85,7 @@ class WebRequest(object):
         kwargs = self._with_front_proxy(kwargs)
         while True:
             try:
-                self.response = requests.get(url, headers=headers, timeout=timeout, *args, **kwargs)
+                self.response = self.session.get(url, headers=headers, timeout=timeout, *args, **kwargs)
                 self.response.raise_for_status()
                 return self
             except Exception as e:
@@ -113,7 +112,7 @@ class WebRequest(object):
         kwargs = self._with_front_proxy(kwargs)
         while True:
             try:
-                self.response = requests.post(url, headers=headers, timeout=timeout, *args, **kwargs)
+                self.response = self.session.post(url, headers=headers, timeout=timeout, *args, **kwargs)
                 self.response.raise_for_status()
                 return self
             except Exception as e:
