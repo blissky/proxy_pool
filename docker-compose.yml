@@ -26,9 +26,9 @@ services:
       # Require a new login after this many seconds without user activity.
       WEBUI_SESSION_TIMEOUT_SECONDS: "1800"
       # Minimum interval between source refreshes, in seconds (3600 = 1 hour).
-      FETCH_INTERVAL_SECONDS: "3600"
+      FETCH_INTERVAL_SECONDS: "21600"
       # Full sync and availability detection interval, in seconds (600 = 10 minutes).
-      CHECK_INTERVAL_SECONDS: "1800"
+      CHECK_INTERVAL_SECONDS: "3600"
       # HTTP target used to decide whether a proxy is available.
       HTTP_URL: "http://httpbin.org"
       # HTTPS target used with certificate verification to set the TLS capability flag.
