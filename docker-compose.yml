@@ -18,7 +18,7 @@ services:
       # Minimum interval between source refreshes, in seconds (3600 = 1 hour).
       FETCH_INTERVAL_SECONDS: "3600"
       # Full sync and availability detection interval, in seconds (600 = 10 minutes).
-      CHECK_INTERVAL_SECONDS: "600"
+      CHECK_INTERVAL_SECONDS: "1800"
       # HTTP target used to decide whether a proxy is available.
       HTTP_URL: "http://httpbin.org"
       # HTTPS target used with certificate verification to set the TLS capability flag.
