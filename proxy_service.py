@@ -259,14 +259,15 @@ class RequestHeader:
         return host, 80
 
     def to_upstream(self, username, password):
+        header, separator, body = self.data.partition(b"\r\n\r\n")
         lines = []
-        for line in self.data.split(b"\r\n"):
+        for line in header.split(b"\r\n"):
             if line.lower().startswith(b"proxy-authorization:"):
                 continue
             lines.append(line)
         token = base64.b64encode((username + ":" + password).encode("utf-8")).decode("ascii")
-        lines.insert(-1, "Proxy-Authorization: Basic {}".format(token).encode("ascii"))
-        return b"\r\n".join(lines)
+        lines.append("Proxy-Authorization: Basic {}".format(token).encode("ascii"))
+        return b"\r\n".join(lines) + separator + body
 
 
 def _relay(left, right):
