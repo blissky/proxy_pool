@@ -337,12 +337,13 @@ class NodeDetector:
 
     def _detect_one_at_port(self, node, port):
         try:
-            self._probe_at_port(node, self.http_url, port)
             try:
                 self._probe_at_port(node, self.https_url, port)
-                tls_ok = True
             except Exception:
+                self._probe_at_port(node, self.http_url, port)
                 tls_ok = False
+            else:
+                tls_ok = True
             node.check_count += 1
             node.last_status = True
             node.tls = tls_ok

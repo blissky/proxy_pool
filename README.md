@@ -34,7 +34,7 @@ Compose 只拉取 GitHub Container Registry 中的 `ghcr.io/blissky/proxy_pool:l
 
 Redis 节点快照
   -> 一个检测 sing-box 承载全部节点的认证选路
-  -> 并发 HTTP 检测和严格 TLS 证书检测
+  -> 并发执行 HTTPS 优先检测，失败时回退 HTTP 检测
   -> 暂存本轮可用节点和待删除节点
   -> 生成并启动新正式 sing-box
   -> 新实例就绪后原子切换 8082 和 Redis revision
@@ -49,12 +49,12 @@ Redis 节点快照
 每轮检测只运行一个检测用 sing-box 进程。所有待检测节点配置为独立 outbound，并通过本地 mixed 入站的用户名和密码选择指定节点。`SING_BOX_CHECK_CONCURRENCY` 只控制同时发出的节点检测请求数量，不代表 sing-box 进程数，默认值为 16。
 
 ```text
-HTTP_URL 检测失败
-  -> 节点不可用，进入本轮待删除集合
-HTTP_URL 检测成功、HTTPS_URL 严格证书检测失败
+HTTPS_URL 严格证书检测成功
+  -> 节点可用，且 tls=true，不再检测 HTTP_URL
+HTTPS_URL 检测失败、HTTP_URL 检测成功
   -> 节点可用，但 tls=false
-HTTP_URL 和 HTTPS_URL 均成功
-  -> 节点可用，且 tls=true
+HTTPS_URL 和 HTTP_URL 均检测失败
+  -> 节点不可用，进入本轮待删除集合
 ```
 
 待删除集合只会在新正式实例成功启动、切换和提交后生效。任何系统性检测错误、新实例启动失败或 Redis 提交失败都会保留旧正式实例及旧 Redis 激活状态。
@@ -100,8 +100,8 @@ FRONT_PROXY=socks5://user:password@host:1080
 | `WEBUI_SESSION_TIMEOUT_SECONDS` | Web 控制台无用户操作后的会话过期时间，单位秒，默认 1800 |
 | `FETCH_INTERVAL_SECONDS` | 抓取完成后的代理源刷新间隔，单位秒，默认 21600 |
 | `CHECK_INTERVAL_SECONDS` | 同步完成后的可用性检测间隔，单位秒，默认 3600 |
-| `HTTP_URL` | 判断代理是否可用的 HTTP 检测地址 |
-| `HTTPS_URL` | 检测 TLS 支持的 HTTPS 地址，启用证书校验 |
+| `HTTP_URL` | HTTPS 检测失败后判断代理是否仍可用的 HTTP 回退地址 |
+| `HTTPS_URL` | 优先检测 TLS 支持的 HTTPS 地址，启用证书校验；成功后不再检测 HTTP |
 | `VERIFY_TIMEOUT` | 单个检测地址的访问超时时间，单位秒 |
 | `SING_BOX_CHECK_CONCURRENCY` | 单个检测 sing-box 上同时探测的节点数，默认 16 |
 | `SING_BOX_BINARY` | sing-box 命令路径，默认 `sing-box` |

@@ -27,9 +27,9 @@ services:
       FETCH_INTERVAL_SECONDS: "21600"
       # Availability sync interval after each check finishes, in seconds (3600 = 1 hour).
       CHECK_INTERVAL_SECONDS: "3600"
-      # HTTP target used to decide whether a proxy is available.
+      # HTTP fallback target used to decide availability only when the HTTPS check fails.
       HTTP_URL: "http://httpbin.org"
-      # HTTPS target used with certificate verification to set the TLS capability flag.
+      # HTTPS target checked first with certificate verification; failure falls back to HTTP_URL.
       HTTPS_URL: "https://www.bing.com"
       # Per-target availability check timeout, in seconds.
       VERIFY_TIMEOUT: "5"
