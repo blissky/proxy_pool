@@ -50,6 +50,8 @@
 
 - `v2rayfree`：free-nodes/v2rayfree 的 `sub` 文件；
 - `free-servers`：Pawdroid/Free-servers 的 `sub` 文件。
+- `v2rayshare`：static.v2rayshare.net 按日期生成的 Base64 订阅文件；
+- `freeclashnode`：node.freeclashnode.com 按日期生成的五个 Base64 订阅文件，五个文件合并为一个来源。
 
 来源扫描默认启用 `fetcher/sources/` 中所有 `BaseFetcher.enabled` 为真的来源；生产配置不得通过排除列表只保留单一来源。
 
