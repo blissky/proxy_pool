@@ -4,6 +4,8 @@ services:
     pull_policy: always
     container_name: proxy_pool
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: '1'
     ports:
       # Nginx on the host publishes these ports externally.
       - "127.0.0.1:8082:8082"
