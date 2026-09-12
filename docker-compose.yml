@@ -21,6 +21,11 @@ services:
       PROXY_TIMEOUT: "5"
       # Consecutive connection failures before a node is removed from runtime selection.
       FAIL_THRESHOLD: "2"
+      # /api/proxies 导出的代理链接地址部分，可填 IP、域名、127.0.0.1（默认）或容器名。
+      # 导出链接端口恒为 PROXY_PORT（8082）。
+      EXPORT_PROXY_HOST: "127.0.0.1"
+      # 导出链接协议：http（默认）/ https / socks5 / socks5h。
+      EXPORT_PROXY_SCHEME: "http"
       # Web control-panel access token. Change this before exposing port 8083.
       WEBUI_ACCESS_TOKEN: "sk-change-me"
       # Require a new login after this many seconds without user activity.
