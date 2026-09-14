@@ -5,7 +5,7 @@ import time
 import uuid
 from copy import deepcopy
 
-from core.singbox import NodeDetector, SingBoxSupervisor
+from core.singbox import NodeDetector, SingBoxSupervisor, SourceValidator
 from core.store import NodeStore
 from handler.configHandler import ConfigHandler
 from helper.fetch import Fetcher, get_fetcher_source_count
@@ -30,6 +30,11 @@ class SyncManager:
             timeout=self.conf.verifyTimeout,
             front_proxy=self.conf.frontProxy,
         )
+        self.validator = SourceValidator(
+            binary=self.conf.singBoxBinary,
+            runtime_dir=self.conf.singBoxRuntimeDir,
+            front_proxy=self.conf.frontProxy,
+        )
         self.lock = threading.RLock()
         self.coordination_lock = threading.RLock()
         self.stop_event = threading.Event()
@@ -50,7 +55,7 @@ class SyncManager:
             "start": 0, "end": 0, "current": 0, "total": 0,
             "raw": 0, "parsed": 0, "duplicates": 0, "skipped": 0,
             "fetched": 0, "inserted": 0, "updated": 0,
-            "write_skipped": 0, "result": None, "error": "",
+            "write_skipped": 0, "rejected": 0, "result": None, "error": "",
         }
 
     @staticmethod
@@ -114,6 +119,22 @@ class SyncManager:
         else:
             self.logger.info("[来源] {} 抓取完成，{}".format(source, detail))
 
+    def _validate_sources(self, nodes):
+        """Drop whole sources whose config sing-box rejects, before storage.
+
+        Redis is left untouched for a rejected source, so a pre-existing entry
+        keeps participating in detection until the source recovers.
+        """
+        self._set_fetch(phase="validating")
+        accepted, rejected = self.validator.validate(nodes)
+        for source in sorted(rejected):
+            self.logger.error("[来源] {} 配置未通过 sing-box 校验，本批次不入库：{}".format(
+                source, self._safe_error(rejected[source]),
+            ))
+        with self.lock:
+            self.fetch_state["rejected"] = len(rejected)
+        return accepted
+
     def _begin_fetch(self):
         with self.lock:
             if self.fetch_state["running"]:
@@ -168,6 +189,9 @@ class SyncManager:
                     self.fetch_state["duplicates"],
                     self.fetch_state["parsed"] - len(nodes),
                 )
+            nodes = self._validate_sources(nodes)
+            if self.stop_event.is_set():
+                raise RuntimeError("服务正在停止，取消抓取提交")
             self._set_fetch(phase="committing", fetched=len(nodes))
             with self.store.lock:
                 with self.coordination_lock:

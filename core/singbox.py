@@ -207,6 +207,68 @@ class SingBoxRunner:
                 process.wait(timeout=5)
 
 
+class SourceValidator:
+    """Reject whole sources whose config sing-box refuses, before storage.
+
+    Each source is checked on its own so an invalid config never reaches Redis
+    and therefore never makes the full-pool detection config fail. Node tags and
+    inbound credentials are unique per node, so source configs are disjoint and
+    the union stays valid as long as every source passes here.
+
+    A rejected source is dropped as a whole: its nodes are not stored, and an
+    existing entry in Redis is left untouched.
+    """
+
+    def __init__(self, binary="sing-box", runtime_dir="/tmp/proxy-pool-singbox",
+                 front_proxy=""):
+        self.runner = SingBoxRunner(binary, os.path.join(runtime_dir, "sources"))
+        self.front_proxy = front_proxy
+
+    @staticmethod
+    def group_by_source(nodes):
+        grouped = {}
+        for node in nodes:
+            for source in (node.source or "").split("/"):
+                if source:
+                    grouped.setdefault(source, []).append(node)
+        return grouped
+
+    def validate(self, nodes):
+        """Return ``(accepted, rejected)`` for one fetched batch.
+
+        ``accepted`` keeps only nodes that belong to no rejected source;
+        ``rejected`` maps every source whose config failed to its message.
+        """
+        batch = list(nodes or [])
+        grouped = self.group_by_source(batch)
+        rejected = {}
+        for source in sorted(grouped):
+            try:
+                self._check_source(grouped[source])
+            except Exception as exc:
+                rejected[source] = str(exc)
+        if not rejected:
+            return batch, {}
+        blocked = set(rejected)
+        accepted = [
+            node for node in batch
+            if not (set((node.source or "").split("/")) & blocked)
+        ]
+        return accepted, rejected
+
+    def _check_source(self, nodes):
+        port = find_free_port()
+        path = os.path.join(self.runner.runtime_dir, "{}.json".format(uuid.uuid4().hex))
+        try:
+            self.runner.write_config(build_config(nodes, port, self.front_proxy), path)
+            self.runner.check(path)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
 class NodeDetector:
     """Check a node snapshot through one shared authenticated sing-box."""
 
@@ -236,28 +298,15 @@ class NodeDetector:
         try:
             self.runner.write_config(build_config(nodes, port, self.front_proxy), path)
             self.runner.check(path)
-            valid, invalid = nodes, []
-        except Exception as combined_error:
+        except Exception as exc:
             try:
-                self.runner.write_config(build_config([], port, self.front_proxy), path)
-                self.runner.check(path)
-                if len(nodes) == 1:
-                    valid, invalid = [], [(nodes[0], str(combined_error))]
-                else:
-                    middle = len(nodes) // 2
-                    left_valid, left_invalid = self._partition_valid(nodes[:middle], port, path)
-                    right_valid, right_invalid = self._partition_valid(nodes[middle:], port, path)
-                    valid = left_valid + right_valid
-                    invalid = left_invalid + right_invalid
-                if valid:
-                    self.runner.write_config(build_config(valid, port, self.front_proxy), path)
-                    self.runner.check(path)
-            except Exception:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-                raise
+                os.unlink(path)
+            except OSError:
+                pass
+            raise RuntimeError(
+                "sing-box check rejected the {}-node configuration, aborting this "
+                "round instead of bisecting: {}".format(len(nodes), exc)
+            ) from exc
         except BaseException:
             try:
                 os.unlink(path)
@@ -269,13 +318,6 @@ class NodeDetector:
         total = len(nodes)
         instance = None
         try:
-            for node, error in invalid:
-                self._mark_failure(node)
-                results.append(node)
-                if callback:
-                    callback(node, error, len(results), total)
-            if not valid:
-                return results
             instance = self.runner.start(path, port, revision, temporary=True)
             with self.lock:
                 if self.stopped:
@@ -284,7 +326,7 @@ class NodeDetector:
             with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
                 futures = {
                     executor.submit(self._detect_one_at_port, node, port): node
-                    for node in valid
+                    for node in nodes
                 }
                 for future in as_completed(futures):
                     node, error = future.result()
@@ -310,20 +352,6 @@ class NodeDetector:
             instance = self.active
             self.active = None
         self.runner.stop(instance)
-
-    def _partition_valid(self, nodes, port, path):
-        """Use bisecting config checks only when the combined config is invalid."""
-        try:
-            self.runner.write_config(build_config(nodes, port, self.front_proxy), path)
-            self.runner.check(path)
-            return list(nodes), []
-        except Exception as exc:
-            if len(nodes) == 1:
-                return [], [(nodes[0], str(exc))]
-            middle = len(nodes) // 2
-            left_valid, left_invalid = self._partition_valid(nodes[:middle], port, path)
-            right_valid, right_invalid = self._partition_valid(nodes[middle:], port, path)
-            return left_valid + right_valid, left_invalid + right_invalid
 
     @staticmethod
     def _mark_failure(node):

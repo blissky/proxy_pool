@@ -6,6 +6,7 @@ import http.client
 import ipaddress
 import socket
 import ssl
+import threading
 from urllib.parse import urlsplit
 
 
@@ -50,6 +51,26 @@ def _recv_headers(sock, limit=65536):
         if len(data) > limit:
             raise OSError("proxy response headers too large")
     return data
+
+
+_VERIFY_SSL_CONTEXT = None
+_VERIFY_SSL_CONTEXT_LOCK = threading.Lock()
+
+
+def _verify_ssl_context():
+    """Return the shared strict-verification client context.
+
+    ``ssl.create_default_context`` spends ~17ms loading the CA store and does
+    not release the GIL, so building one per probe serialises the detection
+    pool. The verification rules stay identical: the target is still validated
+    against the same CA store, only the context object is reused.
+    """
+    global _VERIFY_SSL_CONTEXT
+    if _VERIFY_SSL_CONTEXT is None:
+        with _VERIFY_SSL_CONTEXT_LOCK:
+            if _VERIFY_SSL_CONTEXT is None:
+                _VERIFY_SSL_CONTEXT = ssl.create_default_context()
+    return _VERIFY_SSL_CONTEXT
 
 
 def _connect_to_endpoint(host, port, timeout, front_proxy=""):
@@ -248,7 +269,7 @@ def request_via_proxy(
             if parsed.scheme == "https":
                 _http_connect(sock, parsed.hostname, dest_port,
                               proxy_username, proxy_password)
-                sock = ssl.create_default_context().wrap_socket(
+                sock = _verify_ssl_context().wrap_socket(
                     sock, server_hostname=parsed.hostname
                 )
                 target = path
@@ -269,7 +290,7 @@ def request_via_proxy(
                 raise ValueError("unsupported upstream type: {}".format(proxy_type))
             target = path
             if parsed.scheme == "https":
-                sock = ssl.create_default_context().wrap_socket(
+                sock = _verify_ssl_context().wrap_socket(
                     sock, server_hostname=parsed.hostname
                 )
         return _http_request(sock, method, target, host_header, headers)
