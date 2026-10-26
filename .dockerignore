@@ -34,3 +34,4 @@ proxy_pool.pid
 *.bak
 docker-compose.*.yml
 site
+.cache

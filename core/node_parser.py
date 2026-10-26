@@ -16,6 +16,32 @@ UTLS_FINGERPRINTS = {
     "random", "randomized",
 }
 
+# 以下取值对齐 Dockerfile 固定的 sing-box 1.13.2（源码 + 文档 + 二进制实测）。
+# 升级 SING_BOX_VERSION 时需要重新核对。
+SS_METHODS = {
+    "none", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm",
+    "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305",
+    "aes-128-ctr", "aes-192-ctr", "aes-256-ctr",
+    "aes-128-cfb", "aes-192-cfb", "aes-256-cfb",
+    "rc4-md5", "chacha20-ietf", "xchacha20",
+}
+SS2022_KEY_SIZES = {
+    "2022-blake3-aes-128-gcm": 16,
+    "2022-blake3-aes-256-gcm": 32,
+    "2022-blake3-chacha20-poly1305": 32,
+}
+# 文档列出 aes-128-ctr，但 1.13.2 二进制拒绝；aes-128-cfb 文档未列但可用。
+VMESS_SECURITIES = {"", "auto", "none", "zero", "aes-128-gcm", "chacha20-poly1305", "aes-128-cfb"}
+VLESS_FLOWS = {"", "xtls-rprx-vision"}
+SINGBOX_UTLS_FINGERPRINTS = UTLS_FINGERPRINTS | {
+    "", "chrome_psk", "chrome_psk_shuffle", "chrome_padding_psk_shuffle", "chrome_pq", "chrome_pq_psk",
+}
+_STD_BASE64 = re.compile(r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
+# reality public_key 用 RawURLEncoding 解码且必须是 32 字节，即恰好 43 个字符。
+_REALITY_PUBLIC_KEY = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_SHORT_ID = re.compile(r"^(?:[0-9A-Fa-f]{2}){0,8}$")
+_ATOI = re.compile(r"^[+-]?[0-9]+$")
+
 
 def decode_base64_text(value):
     """Decode standard or URL-safe Base64 text with optional missing padding."""
@@ -266,6 +292,108 @@ def _parse_hysteria2(uri):
                      outbound_config=config)
 
 
+def _strip_newlines(value):
+    """Go's base64 decoders silently skip CR and LF."""
+    return value.replace("\r", "").replace("\n", "")
+
+
+def _plugin_options(value):
+    """Port of sing-box ``sip003.ParsePluginOptions``; first value per key wins."""
+    options, index = {}, 0
+
+    def read(stop):
+        nonlocal index
+        chars = []
+        while index < len(value) and value[index] not in stop:
+            if value[index] == "\\":
+                index += 1
+                if index >= len(value):
+                    raise ValueError("invalid ss plugin options")
+            chars.append(value[index])
+            index += 1
+        return "".join(chars)
+
+    while index < len(value):
+        key = read("=;")
+        if not key:
+            raise ValueError("invalid ss plugin options")
+        if index >= len(value) or value[index] != "=":
+            options.setdefault(key, "1")
+        else:
+            index += 1
+            options.setdefault(key, read(";"))
+        index += 1
+    return options
+
+
+def _check_ss(config):
+    method = config.get("method") or ""
+    password = config.get("password") or ""
+    if method in SS2022_KEY_SIZES:
+        for key in password.split(":"):
+            key = _strip_newlines(key)
+            if not _STD_BASE64.fullmatch(key) or len(base64.b64decode(key)) != SS2022_KEY_SIZES[method]:
+                raise ValueError("invalid ss 2022 key")
+    elif method not in SS_METHODS:
+        raise ValueError("unsupported ss method")
+    if not password and method != "none":
+        raise ValueError("missing ss password")
+    plugin = config.get("plugin") or ""
+    if not plugin:
+        return
+    options = _plugin_options(config.get("plugin_opts") or "")
+    if plugin == "obfs-local":
+        if options.get("obfs", "http") not in ("http", "tls"):
+            raise ValueError("unsupported ss obfs mode")
+    elif plugin == "v2ray-plugin":
+        mode = options.get("mode", "websocket")
+        if mode == "websocket":
+            if "mux" in options and not _ATOI.fullmatch(options["mux"]):
+                raise ValueError("invalid v2ray-plugin mux")
+        elif mode != "quic" or "tls" not in options:
+            raise ValueError("unsupported v2ray-plugin mode")
+    else:
+        raise ValueError("unsupported ss plugin")
+
+
+def _check_tls(tls):
+    utls = tls.get("utls") or {}
+    if tls.get("enabled") and utls.get("enabled") and utls.get("fingerprint", "") not in SINGBOX_UTLS_FINGERPRINTS:
+        raise ValueError("unsupported utls fingerprint")
+    reality = tls.get("reality") or {}
+    if not (tls.get("enabled") and reality.get("enabled")):
+        return
+    if not (tls.get("utls") or {}).get("enabled"):
+        raise ValueError("reality requires utls fingerprint")
+    if not _REALITY_PUBLIC_KEY.fullmatch(_strip_newlines(reality.get("public_key") or "")):
+        raise ValueError("invalid reality public key")
+    if not _SHORT_ID.fullmatch(reality.get("short_id") or ""):
+        raise ValueError("invalid reality short id")
+
+
+def check_outbound(config):
+    """Reject configs the pinned sing-box would refuse at ``sing-box check``.
+
+    Messages never echo field values: malformed URIs may carry credentials.
+    """
+    kind = config.get("type")
+    if kind == "shadowsocks":
+        _check_ss(config)
+    elif kind == "vmess" and (config.get("security") or "") not in VMESS_SECURITIES:
+        raise ValueError("unsupported vmess security")
+    elif kind == "vless" and (config.get("flow") or "") not in VLESS_FLOWS:
+        raise ValueError("unsupported vless flow")
+    elif kind == "hysteria2":
+        if not (config.get("tls") or {}).get("enabled"):
+            raise ValueError("hysteria2 requires tls")
+        obfs = config.get("obfs")
+        if obfs and (obfs.get("type") != "salamander" or not obfs.get("password")):
+            raise ValueError("unsupported hysteria2 obfs")
+    if (config.get("transport") or {}).get("type") == "quic" and not (config.get("tls") or {}).get("enabled"):
+        raise ValueError("quic transport requires tls")
+    _check_tls(config.get("tls") or {})
+
+
 _STRICT_BASE64 = re.compile(r"^[A-Za-z0-9+/_-]+={0,2}$")
 _ENDPOINT_SCHEMES = {
     "http": "http",
@@ -337,5 +465,6 @@ def parse_node_uri(uri, source=""):
         "hysteria2": _parse_hysteria2,
     }[scheme]
     node = parser(uri)
+    check_outbound(node.outbound_config)
     node.source = source or node.source
     return node

@@ -6,7 +6,7 @@ Redis + sing-box 多协议代理池。一个 Python 进程（`proxy_service.py`�
 
 - `proxy_service.py`：8082 HTTP/SOCKS5 入口（`ProxyServer`）、8083 控制台（`start_control_server`，单线程 `HTTPServer`）、会话认证（`WebAuth`）、内存日志（`Logger`）、运行时选点（`RuntimePool`）。`main.py` 只是兼容入口。
 - `core/node.py`：`ProxyNode` 模型。`node_id` 是协议、出站配置和远端凭据的 SHA-256 指纹。
-- `core/node_parser.py`：解析 ss/trojan/vless/vmess/hysteria2 URI、Base64 订阅，以及粘贴导入文本（`parse_import_text`）。
+- `core/node_parser.py`：解析 ss/trojan/vless/vmess/hysteria2 URI、Base64 订阅，以及粘贴导入文本（`parse_import_text`）。`parse_node_uri` 末尾调用 `check_outbound`，按 Dockerfile 固定的 sing-box 版本（`SING_BOX_VERSION`）剔除必然无法通过 `sing-box check` 的配置；升级 sing-box 时要重新核对其中的取值表。
 - `core/share_link.py`：把节点导出为标准分享链接。
 - `core/store.py`：`NodeStore`，唯一的 Redis 访问层，节点存在一个 hash 里（key 为 `node_id`，值为 JSON）。
 - `core/singbox.py`：生成 sing-box 配置；`SourceValidator`（入库前 `sing-box check`）、`NodeDetector`（单进程批量检测）、`SingBoxSupervisor`（正式实例蓝绿切换）。
@@ -19,7 +19,7 @@ Redis + sing-box 多协议代理池。一个 Python 进程（`proxy_service.py`�
 
 ## 数据流和状态规则
 
-- 抓取：来源结果去重 → `SourceValidator.validate` 按来源名依次校验（只检查尚未被前面来源校验通过的节点；被拒来源的节点不算通过，后续来源会重新检查；入库节点的 `source` 只保留通过的来源）→ `NodeStore.upsert_candidates`。新节点 `synced=False`、`tls=False`；已有节点只合并来源，不覆盖检测字段（`tls`、`synced`、`config_revision`、计数、入站凭据）。
+- 抓取：解析时格式过滤（`check_outbound`）→ 来源结果去重 → `SourceValidator.validate` 按来源名依次校验（只检查尚未被前面来源校验通过的节点；被拒来源的节点不算通过，后续来源会重新检查；入库节点的 `source` 只保留通过的来源）→ `NodeStore.upsert_candidates`。新节点 `synced=False`、`tls=False`；已有节点只合并来源，不覆盖检测字段（`tls`、`synced`、`config_revision`、计数、入站凭据）。
 - 粘贴导入（`POST /import` → `SyncManager.import_nodes`）：走同一个 `upsert_candidates`，但用 `SourceValidator.split_invalid` 二分剔除单个坏节点，来源记为 `manual`。
 - 检测：对 Redis 快照启动一个检测用 sing-box，所有节点用独立 outbound 和 `auth_user` 路由，并发数由 `SING_BOX_CHECK_CONCURRENCY` 限制。先测 `HTTPS_URL`（严格证书校验，通过即 `tls=True`），失败再测 `HTTP_URL`。
 - 同步：`SingBoxSupervisor.activate` 先 check、启动、确认端口就绪，再在锁内切换 active 实例并调用 `commit_detection` 写 Redis；提交失败回滚到旧实例。检测失败的快照节点从 Redis 删除；本轮无可用节点且已有正式实例时放弃激活。
@@ -59,6 +59,7 @@ python -m unittest discover -s tests -v
 ```
 
 - `tests/` 被 `.gitignore` 和 `.dockerignore` 排除，测试只保存在本地，使用标准库 `unittest`。
-- 开发机通常没有 sing-box：测试中用假的 Redis 连接（`NodeStore(connection=...)`）并替换 `SourceValidator._check_source`，控制台接口用 `start_control_server` 绑定端口 0 测试。
+- 单元测试不依赖 sing-box：测试中用假的 Redis 连接（`NodeStore(connection=...)`）并替换 `SourceValidator._check_source`，控制台接口用 `start_control_server` 绑定端口 0 测试。
+- 需要真实 `sing-box check` 时，把 GitHub 官方 release 中与 `SING_BOX_VERSION` 同版本的二进制放到 `.cache/singbox/`（已被 `.gitignore` 和 `.dockerignore` 排除）。
 - 修改节点模型、Redis 序列化、Web 认证、前置代理、sing-box 进程管理或 8082 协议处理时，需要补充对应测试。
 - `LogHandler` 导入时会在仓库根目录创建 `log/`（已被忽略）。
