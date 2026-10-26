@@ -332,7 +332,12 @@ class RequestHeader:
 
 
 def _relay(left, right):
+    """Relay both directions; return ``(sent, received)`` byte counts.
+
+    ``sent`` 是 left→right（客户端发往节点），``received`` 是 right→left。
+    """
     sockets = [left, right]
+    counts = {left: 0, right: 0}
     while sockets:
         readable, _, _ = select.select(sockets, [], [], 30)
         if not readable:
@@ -349,11 +354,13 @@ def _relay(left, right):
                         sock.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
-                return
+                return counts[left], counts[right]
+            counts[source] += len(data)
             try:
                 destination.sendall(data)
             except OSError:
-                return
+                return counts[left], counts[right]
+    return counts[left], counts[right]
 
 
 def _recv_until(sock, marker=b"\r\n\r\n", limit=65536):
@@ -574,6 +581,14 @@ class ProxyServer:
             b"Connection: close\r\n\r\n"
         )
 
+    def record_relay(self, node, sent, received):
+        """Only "client sent data but got 0 bytes back" counts as a failure."""
+        if sent and not received:
+            self.pool.failure(node)
+            self.logger.warn("节点 {} 已转发客户端数据但无数据返回".format(node.node_id[:12]))
+        else:
+            self.pool.success(node)
+
     def serve_one(self, client):
         client.settimeout(self.timeout)
         first = client.recv(1)
@@ -613,9 +628,9 @@ class ProxyServer:
                     proxy_username=node.inbound_username,
                     proxy_password=node.inbound_password,
                 )
-                self.pool.success(node)
                 _socks_ok(client)
-                _relay(client, upstream)
+                sent, received = _relay(client, upstream)
+                self.record_relay(node, sent, received)
             except Exception as exc:
                 self.pool.failure(node)
                 self.logger.warn("节点 {} 连接失败：{}".format(node.node_id[:12], exc))
@@ -650,8 +665,9 @@ class ProxyServer:
             else:
                 upstream = connect_to_proxy(host, port, self.timeout)
                 upstream.sendall(header.to_upstream(node.inbound_username, node.inbound_password))
-            self.pool.success(node)
-            _relay(client, upstream)
+            sent, received = _relay(client, upstream)
+            # 普通 HTTP 请求头已在 relay 前写给节点，同样算客户端发出了数据。
+            self.record_relay(node, sent or not header.is_connect, received)
         except Exception as exc:
             self.pool.failure(node)
             self.logger.warn("节点 {} 连接失败：{}".format(node.node_id[:12], exc))

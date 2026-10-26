@@ -236,24 +236,33 @@ class SourceValidator:
     def validate(self, nodes):
         """Return ``(accepted, rejected)`` for one fetched batch.
 
-        ``accepted`` keeps only nodes that belong to no rejected source;
+        Sources are checked one by one in name order, and each check only
+        covers nodes not already accepted through an earlier source: equal
+        ``node_id`` means equal sing-box config, so a rejected source cannot
+        drag down nodes another source already validated. Nodes of a rejected
+        source never count as accepted, so later sources recheck them.
+        ``accepted`` nodes keep only passing sources in ``source``;
         ``rejected`` maps every source whose config failed to its message.
         """
         batch = list(nodes or [])
         grouped = self.group_by_source(batch)
-        rejected = {}
+        accepted_ids, passed, rejected = set(), {}, {}
         for source in sorted(grouped):
-            try:
-                self._check_source(grouped[source])
-            except Exception as exc:
-                rejected[source] = str(exc)
-        if not rejected:
-            return batch, {}
-        blocked = set(rejected)
-        accepted = [
-            node for node in batch
-            if not (set((node.source or "").split("/")) & blocked)
-        ]
+            pending = [node for node in grouped[source] if node.node_id not in accepted_ids]
+            if pending:
+                try:
+                    self._check_source(pending)
+                except Exception as exc:
+                    rejected[source] = str(exc)
+                    continue
+            accepted_ids.update(node.node_id for node in pending)
+            for node in grouped[source]:
+                passed.setdefault(node.node_id, []).append(source)
+        accepted = []
+        for node in batch:
+            if node.node_id in accepted_ids:
+                node.source = "/".join(passed[node.node_id])
+                accepted.append(node)
         return accepted, rejected
 
     def split_invalid(self, nodes):
@@ -386,9 +395,9 @@ class NodeDetector:
     def _detect_one_at_port(self, node, port):
         try:
             try:
-                self._probe_at_port(node, self.https_url, port)
+                self._probe_at_port(node, self.https_url, port, allow_forbidden=True)
             except Exception:
-                self._probe_at_port(node, self.http_url, port)
+                self._probe_at_port(node, self.http_url, port, allow_forbidden=False)
                 tls_ok = False
             else:
                 tls_ok = True
@@ -404,13 +413,14 @@ class NodeDetector:
             self._mark_failure(node)
             return node, str(exc)
 
-    def _probe_at_port(self, node, url, port):
+    def _probe_at_port(self, node, url, port, allow_forbidden):
+        # HTTPS 已过严格证书校验，403 来自真实目标站；明文 HTTP 的 403 可能是节点或中间设备伪造。
         status, _ = request_via_proxy(
             "http", "127.0.0.1", port, url,
             timeout=self.timeout, proxy_username=node.inbound_username,
             proxy_password=node.inbound_password, method="HEAD",
         )
-        if not (200 <= status < 400 or status == 403):
+        if not (200 <= status < 400 or (allow_forbidden and status == 403)):
             raise RuntimeError("{} returned HTTP status {}".format(url, status))
         return status
 

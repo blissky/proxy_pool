@@ -120,15 +120,16 @@ class SyncManager:
             self.logger.info("[来源] {} 抓取完成，{}".format(source, detail))
 
     def _validate_sources(self, nodes):
-        """Drop whole sources whose config sing-box rejects, before storage.
+        """Drop sources whose config sing-box rejects, before storage.
 
+        Nodes another source already validated are kept under that source.
         Redis is left untouched for a rejected source, so a pre-existing entry
         keeps participating in detection until the source recovers.
         """
         self._set_fetch(phase="validating")
         accepted, rejected = self.validator.validate(nodes)
         for source in sorted(rejected):
-            self.logger.error("[来源] {} 配置未通过 sing-box 校验，本批次不入库：{}".format(
+            self.logger.error("[来源] {} 配置未通过 sing-box 校验，该来源本批次不入库（已由其他来源校验通过的节点保留）：{}".format(
                 source, self._safe_error(rejected[source]),
             ))
         with self.lock:
