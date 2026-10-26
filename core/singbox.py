@@ -256,6 +256,26 @@ class SourceValidator:
         ]
         return accepted, rejected
 
+    def split_invalid(self, nodes):
+        """Return ``(accepted, [(node, error), ...])`` for one node list.
+
+        The list is checked as a whole first; a failing list is halved until
+        each rejected node is isolated, so one bad node does not drop the rest.
+        """
+        nodes = list(nodes or [])
+        if not nodes:
+            return [], []
+        try:
+            self._check_source(nodes)
+            return nodes, []
+        except Exception as exc:
+            if len(nodes) == 1:
+                return [], [(nodes[0], str(exc))]
+        middle = len(nodes) // 2
+        left_ok, left_bad = self.split_invalid(nodes[:middle])
+        right_ok, right_bad = self.split_invalid(nodes[middle:])
+        return left_ok + right_ok, left_bad + right_bad
+
     def _check_source(self, nodes):
         port = find_free_port()
         path = os.path.join(self.runner.runtime_dir, "{}.json".format(uuid.uuid4().hex))

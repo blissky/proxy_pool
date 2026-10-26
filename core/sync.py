@@ -247,6 +247,30 @@ class SyncManager:
         ).start()
         return True
 
+    def import_nodes(self, nodes):
+        """Store pasted nodes as unsynced candidates, like fetched ones."""
+        unique = {}
+        for node in nodes:
+            unique.setdefault(node.node_id, node)
+        accepted, rejected = self.validator.split_invalid(list(unique.values()))
+        for node, error in rejected:
+            self.logger.error("[导入] {} 配置未通过 sing-box 校验：{}".format(
+                node.proxy, self._safe_error(error),
+            ))
+        write_result = self.store.upsert_candidates(accepted)
+        result = {
+            "parsed": len(nodes),
+            "duplicates": len(nodes) - len(unique),
+            "rejected": len(rejected),
+            "inserted": write_result["inserted"],
+            "updated": write_result["updated"],
+        }
+        self.logger.info(
+            "导入完成：解析 {parsed} 条，重复 {duplicates} 条，校验拒绝 {rejected} 条，"
+            "新增 {inserted} 条，更新 {updated} 条".format(**result)
+        )
+        return result
+
     def _publish_detection(self, alive, failed_ids, snapshot_ids, revision):
         with self.store.lock:
             result = self.store.commit_detection(

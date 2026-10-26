@@ -266,6 +266,62 @@ def _parse_hysteria2(uri):
                      outbound_config=config)
 
 
+_STRICT_BASE64 = re.compile(r"^[A-Za-z0-9+/_-]+={0,2}$")
+_ENDPOINT_SCHEMES = {
+    "http": "http",
+    "socks": "socks",
+    "socks5": "socks",
+    "socks5h": "socks",
+}
+
+
+def _decode_pasted(text):
+    """Return decoded text when the paste is one Base64 blob, else ``None``."""
+    raw = "".join(text.split())
+    if "://" in text or len(raw) % 4 == 1 or not _STRICT_BASE64.fullmatch(raw):
+        return None
+    try:
+        base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4), altchars=b"-_", validate=True)
+        return decode_base64_text(raw)
+    except (ValueError, binascii.Error):
+        return None
+
+
+def _parse_pasted_line(line, source):
+    scheme, separator, _ = line.partition("://")
+    scheme = scheme.lower() if separator else ""
+    if scheme in SUPPORTED_SCHEMES:
+        return parse_node_uri(line, source)
+    if not separator:
+        return ProxyNode.from_endpoint(line, source, "http")
+    if scheme in _ENDPOINT_SCHEMES:
+        return ProxyNode.from_endpoint(line, source, _ENDPOINT_SCHEMES[scheme])
+    raise ValueError("unsupported node scheme")
+
+
+def parse_import_text(text, source="manual"):
+    """Parse pasted nodes, either plain lines or one Base64 subscription.
+
+    Accepts every type the fetchers produce: ss, trojan, vless, vmess and
+    hysteria2 links, ``http://``/``socks5://`` endpoints and bare ``host:port``
+    lines (treated as HTTP). Returns ``(nodes, errors)``; each error is
+    ``(line_number, reason)`` and never repeats the line, which may hold secrets.
+    """
+    text = (text or "").lstrip("\ufeff")
+    decoded = _decode_pasted(text)
+    nodes = []
+    errors = []
+    for number, line in enumerate((text if decoded is None else decoded).splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            nodes.append(_parse_pasted_line(line, source))
+        except Exception as exc:
+            errors.append((number, str(exc).split(":", 1)[0] or type(exc).__name__))
+    return nodes, errors
+
+
 def parse_node_uri(uri, source=""):
     """Parse one supported URI and attach the fetcher source name."""
     uri = (uri or "").strip()

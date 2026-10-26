@@ -18,6 +18,7 @@ from collections import deque
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+from core.node_parser import parse_import_text
 from core.share_link import export_share_links
 from core.store import NodeStore
 from core.sync import SyncManager
@@ -44,6 +45,7 @@ EXPORT_PROXY_HOST = os.getenv("EXPORT_PROXY_HOST", "127.0.0.1").strip() or "127.
 EXPORT_PROXY_SCHEME = os.getenv("EXPORT_PROXY_SCHEME", "http").strip().lower()
 if EXPORT_PROXY_SCHEME not in ("http", "https", "socks5", "socks5h"):
     EXPORT_PROXY_SCHEME = "http"
+IMPORT_MAX_BYTES = 2 * 1024 * 1024
 _FLAG_TRUE = {"1", "true", "yes", "on"}
 _FLAG_FALSE = {"", "0", "false", "no", "off"}
 
@@ -881,6 +883,28 @@ def start_control_server(logger, pool, sync, config, stop_event, auth):
                     self.send_json({"error": "同步任务正在运行或首次抓取尚未完成"}, 409)
                 else:
                     self.send_json(sync.snapshot(), 202)
+                return
+            if path == "/import":
+                if int(self.headers.get("Content-Length", "0") or 0) > IMPORT_MAX_BYTES:
+                    self.send_json({"error": "导入内容过大"}, 413)
+                    return
+                payload = self.body()
+                text = payload.get("text") if isinstance(payload, dict) else None
+                if not isinstance(text, str) or not text.strip():
+                    self.send_json({"error": "导入内容为空"}, 400)
+                    return
+                nodes, errors = parse_import_text(text)
+                if errors:
+                    logger.warn("[导入] 跳过无法解析的 {} 行，行号：{}".format(
+                        len(errors), ", ".join(str(number) for number, _ in errors[:20]),
+                    ))
+                if not nodes:
+                    self.send_json({"error": "没有可识别的节点", "invalid": len(errors),
+                                    "errors": errors[:20]}, 400)
+                    return
+                result = sync.import_nodes(nodes)
+                result.update({"invalid": len(errors), "errors": errors[:20]})
+                self.send_json(result)
                 return
             if path == "/pool/delete":
                 node_id = str(self.body().get("node_id") or "")
