@@ -1,9 +1,29 @@
 """Environment-backed configuration for the integrated proxy service."""
 
 import os
+import re
 
 import setting
 from front_proxy import resolve_front_proxy
+
+STATUS_ITEM = re.compile(r"([0-9]{3})(?:\s*-\s*([0-9]{3}))?", re.ASCII)
+
+
+def parse_status_codes(raw, name):
+    codes = set()
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        match = STATUS_ITEM.fullmatch(item)
+        if not match:
+            raise ValueError("{} 格式错误：{}".format(name, item))
+        low = int(match.group(1))
+        high = int(match.group(2) or low)
+        if not 100 <= low <= high <= 999:
+            raise ValueError("{} 状态码须在 100-999 且区间不能倒序：{}".format(name, item))
+        codes.update(range(low, high + 1))
+    return frozenset(codes)
 
 
 class ConfigHandler:
@@ -33,6 +53,20 @@ class ConfigHandler:
     @property
     def httpsUrl(self):
         return os.getenv("HTTPS_URL", setting.HTTPS_URL)
+
+    @property
+    def httpStatusBlacklist(self):
+        return parse_status_codes(
+            os.getenv("HTTP_STATUS_BLACKLIST", setting.HTTP_STATUS_BLACKLIST),
+            "HTTP_STATUS_BLACKLIST",
+        )
+
+    @property
+    def httpsStatusBlacklist(self):
+        return parse_status_codes(
+            os.getenv("HTTPS_STATUS_BLACKLIST", setting.HTTPS_STATUS_BLACKLIST),
+            "HTTPS_STATUS_BLACKLIST",
+        )
 
     @property
     def verifyTimeout(self):

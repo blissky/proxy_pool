@@ -38,6 +38,11 @@ services:
       HTTP_URL: "http://httpbin.org"
       # HTTPS target checked first with certificate verification; failure falls back to HTTP_URL.
       HTTPS_URL: "https://www.bing.com"
+      # 探测状态码黑名单：目标返回其中的状态码即判为该次探测失败（HTTPS 失败后照常改测 HTTP）。
+      # 英文逗号分隔，"-" 表示连续区间；范围 100-999，留空表示不拉黑任何状态码。
+      # 探测使用 HEAD 请求，配置时注意目标站对 HEAD 的响应码。
+      HTTP_STATUS_BLACKLIST: "100-199,400-999"
+      HTTPS_STATUS_BLACKLIST: "100-199,400-402,404-999"
       # Per-target availability check timeout, in seconds.
       VERIFY_TIMEOUT: "5"
       # Maximum node probes sharing the single checker sing-box process.

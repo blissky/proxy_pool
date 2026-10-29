@@ -21,7 +21,7 @@ Redis + sing-box 多协议代理池。一个 Python 进程（`proxy_service.py`�
 
 - 抓取：解析时格式过滤（`check_outbound`）→ 来源结果去重 → `SourceValidator.validate` 按来源名依次校验（只检查尚未被前面来源校验通过的节点；被拒来源的节点不算通过，后续来源会重新检查；入库节点的 `source` 只保留通过的来源）→ `NodeStore.upsert_candidates`。新节点 `synced=False`、`tls=False`；已有节点只合并来源，不覆盖检测字段（`tls`、`synced`、`config_revision`、计数、入站凭据）。
 - 粘贴导入（`POST /import` → `SyncManager.import_nodes`）：走同一个 `upsert_candidates`，但用 `SourceValidator.split_invalid` 二分剔除单个坏节点，来源记为 `manual`。
-- 检测：对 Redis 快照启动一个检测用 sing-box，所有节点用独立 outbound 和 `auth_user` 路由，并发数由 `SING_BOX_CHECK_CONCURRENCY` 限制。先测 `HTTPS_URL`（严格证书校验，通过即 `tls=True`），失败再测 `HTTP_URL`。
+- 检测：对 Redis 快照启动一个检测用 sing-box，所有节点用独立 outbound 和 `auth_user` 路由，并发数由 `SING_BOX_CHECK_CONCURRENCY` 限制。先测 `HTTPS_URL`（严格证书校验，通过即 `tls=True`），失败再测 `HTTP_URL`。状态码是否通过只看黑名单（`HTTPS_STATUS_BLACKLIST` / `HTTP_STATUS_BLACKLIST`，由 `configHandler.parse_status_codes` 解析，格式错误启动即报错）；HTTPS 命中黑名单也照常改测 HTTP。
 - 同步：`SingBoxSupervisor.activate` 先 check、启动、确认端口就绪，再在锁内切换 active 实例并调用 `commit_detection` 写 Redis；提交失败回滚到旧实例。检测失败的快照节点从 Redis 删除；本轮无可用节点且已有正式实例时放弃激活。
 - `synced` 表示节点在当前正式 sing-box 配置中；`tls` 表示能通过严格证书校验访问 HTTPS 目标，与节点自身的 TLS 配置无关（节点出站 TLS 在 sing-box 中设为 `insecure`）。两者在 JSON 中必须是真正的布尔值。
 - 8082 运行时连接失败达到 `FAIL_THRESHOLD` 时调用 `mark_unsynced`，不删除节点。

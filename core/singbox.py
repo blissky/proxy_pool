@@ -303,11 +303,14 @@ class NodeDetector:
 
     def __init__(self, binary="sing-box", runtime_dir="/tmp/proxy-pool-singbox",
                  concurrency=4, http_url="http://httpbin.org", https_url="https://www.qq.com",
-                 timeout=10, front_proxy=""):
+                 timeout=10, front_proxy="", http_blacklist=frozenset(),
+                 https_blacklist=frozenset()):
         self.runner = SingBoxRunner(binary, os.path.join(runtime_dir, "checks"))
         self.concurrency = max(1, int(concurrency))
         self.http_url = http_url
         self.https_url = https_url
+        self.http_blacklist = frozenset(http_blacklist)
+        self.https_blacklist = frozenset(https_blacklist)
         self.timeout = timeout
         self.front_proxy = front_proxy
         self.lock = threading.RLock()
@@ -395,9 +398,9 @@ class NodeDetector:
     def _detect_one_at_port(self, node, port):
         try:
             try:
-                self._probe_at_port(node, self.https_url, port, allow_forbidden=True)
+                self._probe_at_port(node, self.https_url, port, self.https_blacklist)
             except Exception:
-                self._probe_at_port(node, self.http_url, port, allow_forbidden=False)
+                self._probe_at_port(node, self.http_url, port, self.http_blacklist)
                 tls_ok = False
             else:
                 tls_ok = True
@@ -413,14 +416,13 @@ class NodeDetector:
             self._mark_failure(node)
             return node, str(exc)
 
-    def _probe_at_port(self, node, url, port, allow_forbidden):
-        # HTTPS 已过严格证书校验，403 来自真实目标站；明文 HTTP 的 403 可能是节点或中间设备伪造。
+    def _probe_at_port(self, node, url, port, blacklist):
         status, _ = request_via_proxy(
             "http", "127.0.0.1", port, url,
             timeout=self.timeout, proxy_username=node.inbound_username,
             proxy_password=node.inbound_password, method="HEAD",
         )
-        if not (200 <= status < 400 or (allow_forbidden and status == 403)):
+        if status in blacklist:
             raise RuntimeError("{} returned HTTP status {}".format(url, status))
         return status
 

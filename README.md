@@ -22,7 +22,7 @@ docker compose up -d
 ## 工作流程
 
 1. 抓取：并发运行 `fetcher/sources/` 下所有启用的来源，解析为结构化节点并按指纹去重。每个来源的配置先经 `sing-box check` 校验，不通过的来源整批不入库。新节点以“未同步”状态写入 Redis。
-2. 检测：对 Redis 快照启动一个检测用 sing-box 进程，每个节点独立出站，并发探测 `HTTPS_URL`（严格证书校验），失败再探测 `HTTP_URL`。HTTPS 通过的节点标记为支持 TLS；两者都失败的节点从 Redis 删除。
+2. 检测：对 Redis 快照启动一个检测用 sing-box 进程，每个节点独立出站，并发探测 `HTTPS_URL`（严格证书校验），失败（含返回 `HTTPS_STATUS_BLACKLIST` 中的状态码）再探测 `HTTP_URL`（同样受 `HTTP_STATUS_BLACKLIST` 约束）。HTTPS 通过的节点标记为支持 TLS；两者都失败的节点从 Redis 删除。
 3. 同步：用可用节点生成新的正式 sing-box 配置，启动并确认就绪后切换 8082 的上游，再关闭旧实例。新实例失败时保留旧实例；本轮无可用节点时也保留旧配置。
 
 启动时先完成一次抓取，再开始检测同步。之后两者分别按 `FETCH_INTERVAL_SECONDS`、`CHECK_INTERVAL_SECONDS` 调度，间隔从上一次任务结束开始计算。
@@ -83,6 +83,7 @@ GET /api/proxies?token=<WEBUI_ACCESS_TOKEN>[&format=endpoint|share][&tls_only=1]
 | `FETCH_INTERVAL_SECONDS` | 抓取间隔（21600） |
 | `CHECK_INTERVAL_SECONDS` | 检测同步间隔（3600） |
 | `HTTPS_URL` / `HTTP_URL` | 检测目标（`https://www.qq.com` / `http://httpbin.org`） |
+| `HTTPS_STATUS_BLACKLIST` / `HTTP_STATUS_BLACKLIST` | 探测状态码黑名单，命中即判为该次探测失败；英文逗号分隔，`-` 表示连续区间，范围 100-999，留空不拉黑。默认 `100-199,400-402,404-999` / `100-199,400-999`（HTTPS 放行 403，HTTP 不放行）。探测使用 HEAD 请求 |
 | `VERIFY_TIMEOUT` | 单个检测请求超时秒数（10） |
 | `SING_BOX_CHECK_CONCURRENCY` | 检测进程上的并发探测数（16） |
 | `SING_BOX_BINARY` / `SING_BOX_RUNTIME_DIR` | sing-box 可执行文件和运行时配置目录 |

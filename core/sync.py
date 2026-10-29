@@ -29,6 +29,8 @@ class SyncManager:
             https_url=self.conf.httpsUrl,
             timeout=self.conf.verifyTimeout,
             front_proxy=self.conf.frontProxy,
+            http_blacklist=self.conf.httpStatusBlacklist,
+            https_blacklist=self.conf.httpsStatusBlacklist,
         )
         self.validator = SourceValidator(
             binary=self.conf.singBoxBinary,
